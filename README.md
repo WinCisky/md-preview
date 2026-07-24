@@ -1,5 +1,5 @@
 <p align="center">
-    <a href="https://wincisky.github.io/md-preview/" target="_blank"><img src="https://raw.githubusercontent.com/WinCisky/md-preview/refs/heads/main/public/favicon.svg" width="250" alt="Json formatter logo"></a>
+    <a href="https://wincisky.github.io/md-preview/" target="_blank"><img src="https://raw.githubusercontent.com/WinCisky/md-preview/refs/heads/main/public/favicon.svg" width="250" alt="md-preview logo"></a>
 </p>
 
 <p align="center">
@@ -7,17 +7,20 @@
     <a href="https://github.com/WinCisky/md-preview/blob/main/LICENSE"><img src="https://img.shields.io/github/license/WinCisky/md-preview" alt="License"></a>
 </p>
 
-# JSON Formatter
+# md-preview
 
-A web-based JSON formatter and validator with automatic repair of malformed JSON. Paste any JSON string into the input panel and see it instantly formatted, validated, and — when needed — repaired in the live preview panel.
+A web-based Markdown previewer that renders your Markdown in real time. Type or paste on the left, see the rendered output on the right — with syntax highlighting, dark/light mode, scroll sync between panes, and a local revision history saved to IndexedDB.
 
 ## Features
 
-- **Live formatting** — Output updates in real time as you type or paste JSON
-- **Automatic repair** — Malformed JSON (trailing commas, missing quotes, comments, single quotes, unquoted keys, etc.) is automatically repaired using [`jsonrepair`](https://github.com/martin-martin/json-repair)
-- **Split-pane layout** — Resizable input and preview panels with layout persistence
-- **Dark / light mode** — Editor theme follows your system color scheme via [`mode-watcher`](https://github.com/ArnaudBarre/mode-watcher)
-- **Syntax highlighting** — Output rendered with CodeMirror 6 and GitHub light/dark themes
+- **Live preview** — Rendered Markdown updates in real time as you type or paste
+- **Split-pane layout** — Resizable input and preview panels; scroll position is synchronized proportionally between the two panes
+- **Syntax highlighting** — Code blocks highlighted with `highlight.js`
+- **Sanitized output** — HTML rendered via DOMPurify for safe rendering
+- **Dark / light mode** — Theme follows your system color scheme via [`mode-watcher`](https://github.com/ArnaudBarre/mode-watcher)
+- **Local revision history** — Documents and their changes are saved to IndexedDB with timestamps, change types (typed/pasted/edit), and per-revision access via URL (`?doc=…&rev=…`)
+- **Download options** — Export as Markdown (`.md`) or PDF (via print dialog)
+- **Paste detection** — Distinguishes full-content paste from inline edits to manage history entries correctly
 
 ## Getting Started
 
@@ -42,8 +45,9 @@ The production build is output to `./dist/`.
 
 ## How It Works
 
-1. User pastes or types a JSON string into the left textarea
-2. The app first tries to parse the input as valid JSON
-3. If parsing fails, it runs the input through `jsonrepair` to fix common mistakes
-4. The result is pretty-printed with 2-space indentation and displayed in the CodeMirror editor on the right
-5. A warning alert appears when repair was needed; an error alert appears if the input could not be processed at all
+1. User types or pastes Markdown into the left textarea
+2. The text is parsed with [`marked`](https://github.com/markedjs/marked) and rendered as HTML
+3. The HTML is sanitized with [`DOMPurify`](https://github.com/DanAyer/dompurify) before rendering
+4. Code blocks are syntax-highlighted by `highlight.js`
+5. A debounced save writes each document (and its revisions) to IndexedDB via `history-db`
+6. The scroll position of the textarea and preview pane is synced proportionally
