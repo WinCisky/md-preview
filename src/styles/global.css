@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "highlight.js/styles/github.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -125,5 +126,406 @@
 	}
 	html {
 		@apply font-sans;
+	}
+}
+
+/* GitHub-flavored markdown preview styles */
+.markdown-body {
+	--md-border: #d0d7de;
+	--md-code-bg: rgba(175, 184, 193, 0.2);
+	--md-canvas-subtle: #f6f8fa;
+	--md-fg-muted: #59636e;
+	--md-accent: #0969da;
+	--md-danger: #cf222e;
+
+	color: var(--foreground);
+	font-size: 16px;
+	line-height: 1.6;
+	word-wrap: break-word;
+}
+
+.dark .markdown-body {
+	--md-border: #30363d;
+	--md-code-bg: rgba(110, 118, 129, 0.4);
+	--md-canvas-subtle: #161b22;
+	--md-fg-muted: #8b949e;
+	--md-accent: #4493f8;
+	--md-danger: #f85149;
+}
+
+.markdown-body > *:first-child {
+	margin-top: 0 !important;
+}
+.markdown-body > *:last-child {
+	margin-bottom: 0 !important;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+	margin-top: 24px;
+	margin-bottom: 16px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.markdown-body h1 {
+	padding-bottom: 0.3em;
+	font-size: 2em;
+	border-bottom: 1px solid var(--md-border);
+}
+
+.markdown-body h2 {
+	padding-bottom: 0.3em;
+	font-size: 1.5em;
+	border-bottom: 1px solid var(--md-border);
+}
+
+.markdown-body h3 {
+	font-size: 1.25em;
+}
+
+.markdown-body h4 {
+	font-size: 1em;
+}
+
+.markdown-body h5 {
+	font-size: 0.875em;
+}
+
+.markdown-body h6 {
+	font-size: 0.85em;
+	color: var(--md-fg-muted);
+}
+
+.markdown-body p {
+	margin-top: 0;
+	margin-bottom: 16px;
+}
+
+.markdown-body a {
+	color: var(--md-accent);
+	text-decoration: none;
+}
+.markdown-body a:hover {
+	text-decoration: underline;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+	margin-top: 0;
+	margin-bottom: 16px;
+	padding-left: 2em;
+}
+
+.markdown-body ul {
+	list-style-type: disc;
+}
+
+.markdown-body ul ul {
+	list-style-type: circle;
+}
+
+.markdown-body ul ul ul {
+	list-style-type: square;
+}
+
+.markdown-body ol {
+	list-style-type: decimal;
+}
+
+.markdown-body li + li {
+	margin-top: 0.25em;
+}
+
+.markdown-body li > p {
+	margin-top: 16px;
+}
+
+.markdown-body ul.contains-task-list {
+	list-style: none;
+	padding-left: 0.5em;
+}
+
+.markdown-body img {
+	max-width: 100%;
+	box-sizing: content-box;
+	background-color: var(--background);
+}
+
+.markdown-body hr {
+	height: 0.25em;
+	margin: 24px 0;
+	padding: 0;
+	background-color: var(--md-border);
+	border: 0;
+}
+
+.markdown-body blockquote {
+	margin: 0 0 16px 0;
+	padding: 0 1em;
+	color: var(--md-fg-muted);
+	border-left: 0.25em solid var(--md-border);
+}
+
+.markdown-body blockquote > :first-child {
+	margin-top: 0;
+}
+.markdown-body blockquote > :last-child {
+	margin-bottom: 0;
+}
+
+.markdown-body table {
+	display: block;
+	width: max-content;
+	max-width: 100%;
+	overflow: auto;
+	margin-top: 0;
+	margin-bottom: 16px;
+	border-spacing: 0;
+	border-collapse: collapse;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+	padding: 6px 13px;
+	border: 1px solid var(--md-border);
+}
+
+.markdown-body table th {
+	font-weight: 600;
+}
+
+.markdown-body table tr {
+	background-color: var(--background);
+	border-top: 1px solid var(--md-border);
+}
+
+.markdown-body table tr:nth-child(2n) {
+	background-color: var(--md-canvas-subtle);
+}
+
+.markdown-body code,
+.markdown-body tt {
+	padding: 0.2em 0.4em;
+	margin: 0;
+	font-size: 85%;
+	white-space: break-spaces;
+	background-color: var(--md-code-bg);
+	border-radius: 6px;
+	font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.markdown-body pre {
+	padding: 16px;
+	overflow: auto;
+	font-size: 85%;
+	line-height: 1.45;
+	background-color: var(--md-canvas-subtle);
+	border-radius: 6px;
+	margin-top: 0;
+	margin-bottom: 16px;
+}
+
+.markdown-body pre code,
+.markdown-body pre tt {
+	display: inline;
+	max-width: auto;
+	padding: 0;
+	margin: 0;
+	overflow: visible;
+	line-height: inherit;
+	word-wrap: normal;
+	background-color: transparent;
+	border: 0;
+	font-size: 100%;
+}
+
+/* Syntax highlighting (highlight.js) for fenced code blocks with a language.
+   The background from the imported theme is disabled so the existing
+   `.markdown-body pre` background (--md-canvas-subtle) stays consistent for
+   both highlighted and plain code blocks. */
+.markdown-body .hljs {
+	background: transparent;
+}
+
+/* github-dark.css palette, scoped to .dark so it doesn't clash with the
+   light github.css theme imported above (highlight.js themes aren't
+   authored to coexist via a class toggle). */
+.dark .markdown-body .hljs {
+	color: #c9d1d9;
+}
+.dark .markdown-body .hljs-doctag,
+.dark .markdown-body .hljs-keyword,
+.dark .markdown-body .hljs-meta .hljs-keyword,
+.dark .markdown-body .hljs-template-tag,
+.dark .markdown-body .hljs-template-variable,
+.dark .markdown-body .hljs-type,
+.dark .markdown-body .hljs-variable.language_ {
+	color: #ff7b72;
+}
+.dark .markdown-body .hljs-title,
+.dark .markdown-body .hljs-title.class_,
+.dark .markdown-body .hljs-title.class_.inherited__,
+.dark .markdown-body .hljs-title.function_ {
+	color: #d2a8ff;
+}
+.dark .markdown-body .hljs-attr,
+.dark .markdown-body .hljs-attribute,
+.dark .markdown-body .hljs-literal,
+.dark .markdown-body .hljs-meta,
+.dark .markdown-body .hljs-number,
+.dark .markdown-body .hljs-operator,
+.dark .markdown-body .hljs-variable,
+.dark .markdown-body .hljs-selector-attr,
+.dark .markdown-body .hljs-selector-class,
+.dark .markdown-body .hljs-selector-id {
+	color: #79c0ff;
+}
+.dark .markdown-body .hljs-regexp,
+.dark .markdown-body .hljs-string,
+.dark .markdown-body .hljs-meta .hljs-string {
+	color: #a5d6ff;
+}
+.dark .markdown-body .hljs-built_in,
+.dark .markdown-body .hljs-symbol {
+	color: #ffa657;
+}
+.dark .markdown-body .hljs-comment,
+.dark .markdown-body .hljs-code,
+.dark .markdown-body .hljs-formula {
+	color: #8b949e;
+}
+.dark .markdown-body .hljs-name,
+.dark .markdown-body .hljs-quote,
+.dark .markdown-body .hljs-selector-tag,
+.dark .markdown-body .hljs-selector-pseudo {
+	color: #7ee787;
+}
+.dark .markdown-body .hljs-subst {
+	color: #c9d1d9;
+}
+.dark .markdown-body .hljs-section {
+	color: #1f6feb;
+	font-weight: bold;
+}
+.dark .markdown-body .hljs-bullet {
+	color: #f2cc60;
+}
+.dark .markdown-body .hljs-emphasis {
+	color: #c9d1d9;
+	font-style: italic;
+}
+.dark .markdown-body .hljs-strong {
+	color: #c9d1d9;
+	font-weight: bold;
+}
+.dark .markdown-body .hljs-addition {
+	color: #aff5b4;
+	background-color: #033a16;
+}
+.dark .markdown-body .hljs-deletion {
+	color: #ffdcd7;
+	background-color: #67060c;
+}
+
+.markdown-body kbd {
+	display: inline-block;
+	padding: 3px 5px;
+	font-size: 85%;
+	line-height: 10px;
+	color: var(--foreground);
+	vertical-align: middle;
+	background-color: var(--md-canvas-subtle);
+	border: 1px solid var(--md-border);
+	border-radius: 6px;
+	box-shadow: inset 0 -1px 0 var(--md-border);
+}
+
+.markdown-body strong {
+	font-weight: 600;
+}
+
+.markdown-body dl {
+	padding: 0;
+}
+.markdown-body dl dt {
+	padding: 0;
+	margin-top: 16px;
+	font-size: 1em;
+	font-style: italic;
+	font-weight: 600;
+}
+.markdown-body dl dd {
+	padding: 0 16px;
+	margin-bottom: 16px;
+}
+
+/* PDF export via the browser's native print engine: real vector text,
+   no client-side rasterization, works for documents of any length. */
+@media print {
+	@page {
+		margin: 2cm;
+	}
+
+	html,
+	body {
+		overflow: visible !important;
+		height: auto !important;
+		background: #fff !important;
+		/* Browsers strip background colors/images by default when printing
+		   to save ink. Force them to render so the code block and inline
+		   code backgrounds show up in the printed page/PDF, matching the
+		   live preview. Inherited, so it also covers .markdown-body's
+		   descendants (pre, code, tables, kbd, ...). */
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+
+	/* Also force the light-mode code backgrounds even if dark mode is
+	   active, matching the flat light text color forced below/above for
+	   .hljs tokens, since the dark canvas/code backgrounds would otherwise
+	   still apply (they're set as component-scoped custom properties on
+	   `.dark .markdown-body`, which is more specific than the plain
+	   `.markdown-body` selector). */
+	.markdown-body,
+	.dark .markdown-body {
+		--md-code-bg: rgba(175, 184, 193, 0.2);
+		--md-canvas-subtle: #f6f8fa;
+		color: #1f2328;
+		font-size: 12pt;
+	}
+
+	.markdown-body pre,
+	.markdown-body table,
+	.markdown-body blockquote,
+	.markdown-body img {
+		break-inside: avoid;
+	}
+
+	.markdown-body h1,
+	.markdown-body h2,
+	.markdown-body h3,
+	.markdown-body h4,
+	.markdown-body h5,
+	.markdown-body h6 {
+		break-after: avoid;
+	}
+
+	.markdown-body a {
+		color: var(--md-accent);
+	}
+
+	/* Force a flat, readable color for syntax-highlighted tokens only when
+	   dark mode is active when printing/exporting to PDF, otherwise the
+	   dark theme's light-colored tokens would be unreadable on the white
+	   printed page. Scoped to `.dark` so light-mode printing keeps the full
+	   github.css syntax-highlighting palette instead of losing it. */
+	.dark .markdown-body .hljs,
+	.dark .markdown-body .hljs * {
+		color: #1f2328 !important;
 	}
 }
