@@ -1,20 +1,10 @@
 ---
-import "../styles/global.css";
-import HistoryView from "$lib/components/history-view.svelte";
+import BaseLayout from '../layouts/BaseLayout.astro';
+const pageTitle = "Cronologia · MD preview";
 
-const base = import.meta.env.BASE_URL;
+import HistoryView from "$lib/components/history-view.svelte";
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
-		<link rel="icon" href={`${base}favicon.ico`} />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Cronologia · MD preview</title>
-	</head>
-	<body>
-		<HistoryView client:load />
-	</body>
-</html>
+<BaseLayout title={pageTitle}>
+	<HistoryView client:load />
+</BaseLayout>
