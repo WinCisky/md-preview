@@ -8,7 +8,14 @@
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn } from "$lib/utils";
-	import { createDocument, addRevision, getDocument, listRevisions, type ChangeType } from "$lib/history-db";
+	import {
+		createDocument,
+		addRevision,
+		getDocument,
+		getLatestDocument,
+		listRevisions,
+		type ChangeType,
+	} from "$lib/history-db";
 
 	const base = import.meta.env.BASE_URL;
 
@@ -246,11 +253,43 @@
 		}, SAVE_DEBOUNCE_MS);
 	});
 
+	/**
+	 * Applica alla textarea un contenuto proveniente dalla cronologia,
+	 * agganciando l'editor al relativo documento. Il testo restaurato è per
+	 * definizione già persistito, quindi l'$effect di salvataggio va zittito
+	 * (suppressNextSave) e il pallino resta verde.
+	 */
+	function applyRestoredDocument(documentId: string, content: string) {
+		// Se il contenuto coincide già con quello mostrato l'$effect non viene
+		// rieseguito: alzare il flag lo lascerebbe pendente e finirebbe per
+		// sopprimere il salvataggio della prima vera modifica dell'utente.
+		if (content !== markdownText) {
+			suppressNextSave = true;
+			markdownText = content;
+		}
+		currentDocumentId = documentId;
+		saveStatus = "saved";
+	}
+
 	onMount(() => {
 		const params = new URLSearchParams(window.location.search);
 		const docId = params.get("doc");
-		if (docId) {
-			suppressNextSave = true;
+		if (!docId) {
+			// Nessun documento richiesto esplicitamente: si riprende l'ultimo su
+			// cui si stava lavorando, così ricaricando la pagina non si perde il
+			// contesto. Il testo di default resta solo alla primissima apertura,
+			// quando la cronologia è ancora vuota.
+			getLatestDocument()
+				.then((latest) => {
+					// Se nel frattempo l'utente ha già iniziato a scrivere (o incollato
+					// qualcosa, creando un documento) non sovrascriviamo il suo lavoro.
+					if (!latest || currentDocumentId || markdownText !== initialMarkdownText) return;
+					applyRestoredDocument(latest.id, latest.latestContent);
+				})
+				.catch((err) => {
+					console.error("Impossibile caricare l'ultimo documento dalla cronologia:", err);
+				});
+		} else {
 			const revId = params.get("rev");
 			// Se è richiesta una revisione specifica ne carichiamo il contenuto,
 			// ma restiamo comunque agganciati allo stesso documentId: le
@@ -265,17 +304,11 @@
 			loadContent
 				.then((content) => {
 					if (content !== null) {
-						markdownText = content;
-						currentDocumentId = docId;
-						// Il contenuto ripristinato è per definizione già in cronologia.
-						saveStatus = "saved";
-					} else {
-						suppressNextSave = false;
+						applyRestoredDocument(docId, content);
 					}
 				})
 				.catch((err) => {
 					console.error("Impossibile caricare il documento dalla cronologia:", err);
-					suppressNextSave = false;
 				});
 			window.history.replaceState(null, "", window.location.pathname);
 		}

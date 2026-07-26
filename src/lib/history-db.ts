@@ -161,6 +161,23 @@ export async function listRevisions(documentId: string): Promise<RevisionRecord[
 	return all.sort((a, b) => b.timestamp - a.timestamp);
 }
 
+/**
+ * Recupera il documento aggiornato più di recente, o undefined se la
+ * cronologia è vuota. Usa l'indice "updatedAt" con un cursore in ordine
+ * inverso così da leggere un solo record invece di caricare (e ordinare)
+ * l'intero contenuto di tutti i documenti.
+ */
+export async function getLatestDocument(): Promise<DocumentRecord | undefined> {
+	const db = await openDb();
+	const tx = db.transaction(DOCUMENTS_STORE, "readonly");
+	const cursor = await requestToPromise(
+		tx.objectStore(DOCUMENTS_STORE).index("updatedAt").openCursor(null, "prev"),
+	);
+	const result = cursor?.value as DocumentRecord | undefined;
+	db.close();
+	return result;
+}
+
 /** Recupera un singolo documento per id. */
 export async function getDocument(documentId: string): Promise<DocumentRecord | undefined> {
 	const db = await openDb();

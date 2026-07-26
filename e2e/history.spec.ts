@@ -152,6 +152,34 @@ test.describe('History', () => {
 		await expect(page.getByRole('heading', { name: 'Restorable Doc', level: 1 })).toBeVisible();
 	});
 
+	test('reopens the most recently saved document on page load', async ({ page }) => {
+		await page.goto('./');
+
+		const input = page.locator('#markdown-input');
+		await input.fill('# Older Doc\n\nSaved first.');
+		await waitForRecordCount(page, 'documents', 1);
+
+		await pasteText(page, '# Newer Doc\n\nSaved last.', { selectAll: true });
+		await waitForRecordCount(page, 'documents', 2);
+
+		await page.goto('./');
+
+		// Al posto del testo di default viene ripreso l'ultimo documento salvato.
+		await expect(page.locator('#markdown-input')).toHaveValue('# Newer Doc\n\nSaved last.');
+		await expect(page.getByRole('heading', { name: 'Newer Doc', level: 1 })).toBeVisible();
+		await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+
+		// Le modifiche successive continuano quel documento invece di crearne uno nuovo.
+		await page.locator('#markdown-input').fill('# Newer Doc\n\nEdited after reload.');
+		await waitForRecordCount(page, 'documents', 2);
+
+		await page.goto('./history');
+		const documents = page.getByTestId('history-document');
+		await expect(documents).toHaveCount(2);
+		await documents.filter({ hasText: 'Newer Doc' }).click();
+		await expect(page.getByTestId('history-revision')).toHaveCount(2);
+	});
+
 	test('reflects the save lifecycle in the history button indicator', async ({ page }) => {
 		await page.goto('./');
 
