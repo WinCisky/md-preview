@@ -152,6 +152,22 @@ test.describe('History', () => {
 		await expect(page.getByRole('heading', { name: 'Restorable Doc', level: 1 })).toBeVisible();
 	});
 
+	test('reflects the save lifecycle in the history button indicator', async ({ page }) => {
+		await page.goto('./');
+
+		const indicator = page.getByTestId('save-status');
+		// Nulla in attesa di salvataggio all'avvio.
+		await expect(indicator).toHaveAttribute('data-status', 'saved');
+
+		const input = page.locator('#markdown-input');
+		await input.fill('# Indicator Doc\n\nUnsaved for now.');
+		// Il debounce (1500 ms) lascia un margine ampio per osservare lo stato "sporco".
+		await expect(indicator).toHaveAttribute('data-status', 'pending');
+
+		await waitForRecordCount(page, 'documents', 1);
+		await expect(indicator).toHaveAttribute('data-status', 'saved');
+	});
+
 	test('deletes a single document and clears the whole history', async ({ page }) => {
 		await page.goto('./');
 

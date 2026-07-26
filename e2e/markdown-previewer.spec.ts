@@ -38,6 +38,41 @@ test.describe('Markdown Previewer', () => {
 		await expect(article).not.toContainText('Second Edit');
 	});
 
+	test.describe('small screens', () => {
+		test.use({ viewport: { width: 360, height: 640 } });
+
+		test('stacks the panes vertically and keeps the whole toolbar in view', async ({ page }) => {
+			await page.goto('./');
+
+			const paneGroup = page.locator('[data-slot="resizable-pane-group"]');
+			await expect(paneGroup).toHaveAttribute('data-direction', 'vertical');
+
+			// Nessun overflow orizzontale della pagina.
+			const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+				scrollWidth: document.documentElement.scrollWidth,
+				clientWidth: document.documentElement.clientWidth,
+			}));
+			expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+
+			// I pulsanti vanno a capo su più righe e restano tutti dentro il viewport.
+			const buttons = [
+				page.getByRole('button', { name: 'Download Markdown' }),
+				page.getByRole('button', { name: 'Download PDF' }),
+				page.getByRole('link', { name: /Cronologia/ }),
+			];
+			const boxes = [];
+			for (const button of buttons) {
+				const box = await button.boundingBox();
+				expect(box).not.toBeNull();
+				expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+				expect(box!.y + box!.height).toBeLessThanOrEqual(640);
+				boxes.push(box!);
+			}
+			// "Cronologia" finisce su una riga sotto gli altri due.
+			expect(boxes[2].y).toBeGreaterThan(boxes[0].y);
+		});
+	});
+
 	test.describe('scroll sync', () => {
 		// Long enough content so both the textarea and the preview pane
 		// actually overflow and become scrollable.

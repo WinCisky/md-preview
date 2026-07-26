@@ -83,8 +83,10 @@
 	}
 </script>
 
-<div class="mx-auto flex h-screen max-w-3xl flex-col gap-4 overflow-y-auto p-6">
-	<div class="flex items-center justify-between gap-2">
+<!-- min-h-svh invece di h-screen + scroller interno: lasciando scorrere la
+     pagina le barre del browser mobile possono collassare normalmente. -->
+<div class="mx-auto flex min-h-svh max-w-3xl flex-col gap-4 p-4 sm:p-6">
+	<div class="flex flex-wrap items-center justify-between gap-2">
 		<Button variant="outline" size="sm" href={base}>
 			<ArrowLeftIcon />
 			Torna all'editor
@@ -113,10 +115,10 @@
 		<ul class="flex flex-col gap-2">
 			{#each documents as document (document.id)}
 				<li class="border-border rounded-lg border" data-testid="history-document">
-					<div class="flex items-center gap-2 p-3">
+					<div class="flex flex-wrap items-center gap-2 p-3">
 						<button
 							type="button"
-							class="flex flex-1 items-center gap-2 text-left"
+							class="flex basis-full items-center gap-2 text-left sm:flex-1 sm:basis-auto"
 							onclick={() => toggleExpand(document.id)}
 						>
 							{#if expandedId === document.id}
@@ -151,7 +153,10 @@
 							{:else}
 								<ul class="flex flex-col gap-1">
 									{#each revisionsByDocument[document.id] as revision (revision.id)}
-										<li class="flex items-center justify-between gap-2 text-sm" data-testid="history-revision">
+										<li
+											class="flex flex-wrap items-center justify-between gap-2 text-sm"
+											data-testid="history-revision"
+										>
 											<span class="text-muted-foreground">
 												{changeTypeLabels[revision.changeType]} · {formatDate(revision.timestamp)}
 											</span>

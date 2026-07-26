@@ -7,6 +7,7 @@
 	import * as Resizable from "$lib/components/ui/resizable/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
+	import { cn } from "$lib/utils";
 	import { createDocument, addRevision, getDocument, listRevisions, type ChangeType } from "$lib/history-db";
 
 	const base = import.meta.env.BASE_URL;
@@ -35,11 +36,55 @@
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingSaveChangeType: ChangeType = "edit";
 
+	// Stato del salvataggio mostrato dal pallino dentro il pulsante "Cronologia".
+	// All'avvio è "saved": non c'è nulla in attesa di essere scritto.
+	type SaveStatus = "saved" | "pending" | "saving" | "error";
+	let saveStatus: SaveStatus = $state("saved");
+
+	// Contatore incrementato ad ogni modifica dell'utente. Viene catturato prima
+	// di avviare una scrittura su IndexedDB e riconfrontato quando la promise si
+	// risolve: se nel frattempo è arrivata una modifica più recente il risultato
+	// è obsoleto e non deve riportare il pallino a verde.
+	let saveGeneration = 0;
+
+	const saveStatusClasses: Record<SaveStatus, string> = {
+		saved: "bg-green-500",
+		pending: "bg-red-500",
+		saving: "bg-amber-500 animate-pulse",
+		error: "bg-red-500",
+	};
+	const saveStatusLabels: Record<SaveStatus, string> = {
+		saved: "Salvato",
+		pending: "Modifiche non salvate",
+		saving: "Salvataggio in corso…",
+		error: "Salvataggio non riuscito",
+	};
+	let saveStatusClass = $derived(saveStatusClasses[saveStatus]);
+	let saveStatusLabel = $derived(saveStatusLabels[saveStatus]);
+
 	let rawHtml = $derived(marked.parse(markdownText) as string);
 	let htmlContent = $state("");
 
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let previewEl: HTMLDivElement | null = $state(null);
+
+	// Sotto il breakpoint md di Tailwind i due pannelli vengono impilati
+	// verticalmente invece che affiancati: su schermi stretti due colonne
+	// sarebbero entrambe inutilizzabili.
+	const NARROW_QUERY = "(max-width: 767px)";
+	// Inizializzato in modo sincrono durante l'hydration così il layout
+	// orizzontale renderizzato lato server non "sfarfalla" su mobile.
+	let isNarrow = $state(typeof window !== "undefined" && window.matchMedia(NARROW_QUERY).matches);
+
+	$effect(() => {
+		const mediaQuery = window.matchMedia(NARROW_QUERY);
+		isNarrow = mediaQuery.matches;
+		const onChange = (event: MediaQueryListEvent) => {
+			isNarrow = event.matches;
+		};
+		mediaQuery.addEventListener("change", onChange);
+		return () => mediaQuery.removeEventListener("change", onChange);
+	});
 
 	// Guard flag (plain variable, not reactive state) used to ignore the
 	// "scroll" event fired by the browser when we programmatically set
@@ -110,18 +155,34 @@
 		}
 	}
 
+	// Aggiorna il pallino solo se nel frattempo non sono arrivate altre modifiche:
+	// l'esito di una scrittura ormai superata non deve sovrascrivere lo stato.
+	function settleSaveStatus(generation: number, status: SaveStatus) {
+		if (generation !== saveGeneration) return;
+		saveStatus = status;
+	}
+
 	function performPendingSave(text: string, changeType: ChangeType) {
+		const generation = saveGeneration;
+		saveStatus = "saving";
 		if (currentDocumentId) {
-			addRevision(currentDocumentId, text, changeType).catch((err) => {
-				console.error("Impossibile salvare la revisione nella cronologia:", err);
-			});
+			addRevision(currentDocumentId, text, changeType)
+				.then(() => {
+					settleSaveStatus(generation, "saved");
+				})
+				.catch((err) => {
+					console.error("Impossibile salvare la revisione nella cronologia:", err);
+					settleSaveStatus(generation, "error");
+				});
 		} else {
 			createDocument(text, "typed")
 				.then((id) => {
 					currentDocumentId = id;
+					settleSaveStatus(generation, "saved");
 				})
 				.catch((err) => {
 					console.error("Impossibile creare il documento nella cronologia:", err);
+					settleSaveStatus(generation, "error");
 				});
 		}
 	}
@@ -154,16 +215,25 @@
 			saveTimer = null;
 		}
 
+		// Da qui in poi c'è una modifica utente non ancora persistita: il pallino
+		// diventa rosso e ogni scrittura in volo più vecchia viene invalidata.
+		saveGeneration++;
+		saveStatus = "pending";
+
 		if (pendingPasteIsNewDocument) {
 			pendingPasteIsNewDocument = false;
 			pendingPasteIsPartial = false;
 			currentDocumentId = null;
+			const generation = saveGeneration;
+			saveStatus = "saving";
 			createDocument(text, "pasted")
 				.then((id) => {
 					currentDocumentId = id;
+					settleSaveStatus(generation, "saved");
 				})
 				.catch((err) => {
 					console.error("Impossibile creare il documento nella cronologia:", err);
+					settleSaveStatus(generation, "error");
 				});
 			return;
 		}
@@ -197,6 +267,8 @@
 					if (content !== null) {
 						markdownText = content;
 						currentDocumentId = docId;
+						// Il contenuto ripristinato è per definizione già in cronologia.
+						saveStatus = "saved";
 					} else {
 						suppressNextSave = false;
 					}
@@ -233,11 +305,17 @@
 
 <ModeWatcher />
 
-<div class="flex h-screen flex-col">
+<!-- h-svh (non h-screen/100vh): l'altezza "small" del viewport considera le
+     barre del browser mobile come visibili, così la toolbar in fondo non
+     finisce mai coperta quando compaiono. -->
+<div class="flex h-svh flex-col print:h-auto">
 	<div class="min-h-0 flex-1 print:hidden">
-		<Resizable.PaneGroup direction="horizontal" autoSaveId="markdown-previewer-layout">
-			<Resizable.Pane defaultSize={50}>
-				<div class="flex h-full flex-col gap-2 p-4">
+		<Resizable.PaneGroup
+			direction={isNarrow ? "vertical" : "horizontal"}
+			autoSaveId={isNarrow ? "markdown-previewer-layout-vertical" : "markdown-previewer-layout"}
+		>
+			<Resizable.Pane defaultSize={50} minSize={20}>
+				<div class="flex h-full min-h-0 flex-col gap-2 p-2 sm:p-4">
 					<Textarea
 						id="markdown-input"
 						class="flex-1 resize-none font-mono p-4 leading-relaxed"
@@ -246,7 +324,7 @@
 						bind:ref={textareaEl}
 						onpaste={handlePaste}
 					/>
-					<div class="flex gap-2">
+					<div class="flex flex-wrap gap-2">
 						<Button size="sm" variant="outline" onclick={downloadMarkdown}>
 							<DownloadIcon />
 							Download Markdown
@@ -258,13 +336,21 @@
 						<Button size="sm" variant="outline" href={`${base}history`}>
 							<HistoryIcon />
 							Cronologia
+							<span
+								class={cn("size-2 shrink-0 rounded-full", saveStatusClass)}
+								data-testid="save-status"
+								data-status={saveStatus}
+								title={saveStatusLabel}
+								aria-label={saveStatusLabel}
+								role="status"
+							></span>
 						</Button>
 					</div>
 				</div>
 			</Resizable.Pane>
 			<Resizable.Handle />
-			<Resizable.Pane defaultSize={50}>
-				<div id="preview-pane" class="h-full overflow-y-auto p-8" bind:this={previewEl}>
+			<Resizable.Pane defaultSize={50} minSize={20}>
+				<div id="preview-pane" class="h-full overflow-y-auto p-4 sm:p-8" bind:this={previewEl}>
 					<article class="markdown-body">
 						{@html htmlContent}
 					</article>
