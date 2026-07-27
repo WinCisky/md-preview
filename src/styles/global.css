@@ -471,6 +471,14 @@
 		margin: 2cm;
 	}
 
+	/* mode-watcher writes `color-scheme: dark` as an inline style on <html>, and
+	   Chromium paints the page canvas -- @page margins included -- with the dark
+	   UA base color, so the exported PDF gets black borders around the content.
+	   An !important author declaration outranks a non-important inline style. */
+	html {
+		color-scheme: light !important;
+	}
+
 	html,
 	body {
 		overflow: visible !important;
@@ -485,16 +493,30 @@
 		print-color-adjust: exact;
 	}
 
-	/* Also force the light-mode code backgrounds even if dark mode is
-	   active, matching the flat light text color forced below/above for
-	   .hljs tokens, since the dark canvas/code backgrounds would otherwise
-	   still apply (they're set as component-scoped custom properties on
+	/* The exported PDF is always a light-theme document, so the dark theme
+	   tokens are reset to their `:root` values. Without this, surfaces that
+	   read them (image and table-row backgrounds) would print as black
+	   rectangles on the white page, since print-color-adjust forces them out. */
+	.dark {
+		--background: oklch(1 0 0);
+		--foreground: oklch(0.145 0 0);
+		--border: oklch(0.922 0 0);
+		--muted: oklch(0.97 0 0);
+		--muted-foreground: oklch(0.556 0 0);
+	}
+
+	/* Same idea for the markdown-scoped tokens: they live on
 	   `.dark .markdown-body`, which is more specific than the plain
-	   `.markdown-body` selector). */
+	   `.markdown-body` selector, so they need an equally specific override.
+	   The flat light text color matches the one forced below for .hljs tokens. */
 	.markdown-body,
 	.dark .markdown-body {
+		--md-border: #d0d7de;
 		--md-code-bg: rgba(175, 184, 193, 0.2);
 		--md-canvas-subtle: #f6f8fa;
+		--md-fg-muted: #59636e;
+		--md-accent: #0969da;
+		--md-danger: #cf222e;
 		color: #1f2328;
 		font-size: 12pt;
 	}

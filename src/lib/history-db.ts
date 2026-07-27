@@ -9,6 +9,9 @@
  * - "revisions": lo storico delle modifiche di ciascun documento (una per
  *   ogni salvataggio debounced durante la digitazione, o per un incolla
  *   parziale dentro un documento già esistente).
+ * - "attachments": i file (immagini o allegati generici) trascinati/incollati
+ *   nell'editor. Il markdown non contiene i byte ma solo un riferimento
+ *   "attachment:<id>", risolto a un object URL al momento del rendering.
  *
  * Tutte le funzioni sono pensate per essere chiamate solo lato client
  * (dentro onMount/effect/event handler di Svelte), mai a livello di modulo,
@@ -16,9 +19,10 @@
  */
 
 const DB_NAME = "md-preview-history";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DOCUMENTS_STORE = "documents";
 const REVISIONS_STORE = "revisions";
+const ATTACHMENTS_STORE = "attachments";
 
 export type DocumentOrigin = "typed" | "pasted";
 export type ChangeType = "initial" | "edit" | "paste";
@@ -38,6 +42,17 @@ export interface RevisionRecord {
 	content: string;
 	changeType: ChangeType;
 	timestamp: number;
+}
+
+export interface AttachmentRecord {
+	id: string;
+	/** null finché il documento che lo contiene non è ancora stato creato. */
+	documentId: string | null;
+	name: string;
+	mimeType: string;
+	size: number;
+	blob: Blob;
+	createdAt: number;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -73,6 +88,14 @@ function openDb(): Promise<IDBDatabase> {
 					autoIncrement: true,
 				});
 				revisions.createIndex("documentId", "documentId");
+			}
+			// Aggiunto nella v2. L'indice "documentId" non contiene i record con
+			// documentId null (IndexedDB non indicizza le chiavi nulle): gli
+			// allegati ancora "orfani" restano quindi invisibili alle query per
+			// documento finché adoptAttachments() non li aggancia.
+			if (!db.objectStoreNames.contains(ATTACHMENTS_STORE)) {
+				const attachments = db.createObjectStore(ATTACHMENTS_STORE, { keyPath: "id" });
+				attachments.createIndex("documentId", "documentId");
 			}
 		};
 		request.onsuccess = () => resolve(request.result);
@@ -187,15 +210,10 @@ export async function getDocument(documentId: string): Promise<DocumentRecord | 
 	return result;
 }
 
-/** Elimina un documento e tutte le sue revisioni. */
-export async function deleteDocument(documentId: string): Promise<void> {
-	const db = await openDb();
-	const tx = db.transaction([DOCUMENTS_STORE, REVISIONS_STORE], "readwrite");
-	tx.objectStore(DOCUMENTS_STORE).delete(documentId);
-	const revisionsStore = tx.objectStore(REVISIONS_STORE);
-	const index = revisionsStore.index("documentId");
-	const cursorRequest = index.openCursor(documentId);
-	await new Promise<void>((resolve, reject) => {
+/** Cancella tutti i record di uno store il cui indice "documentId" vale `documentId`. */
+function deleteByDocumentId(store: IDBObjectStore, documentId: string): Promise<void> {
+	const cursorRequest = store.index("documentId").openCursor(documentId);
+	return new Promise((resolve, reject) => {
 		cursorRequest.onsuccess = () => {
 			const cursor = cursorRequest.result;
 			if (cursor) {
@@ -207,16 +225,120 @@ export async function deleteDocument(documentId: string): Promise<void> {
 		};
 		cursorRequest.onerror = () => reject(cursorRequest.error);
 	});
+}
+
+/** Elimina un documento con tutte le sue revisioni e i suoi allegati. */
+export async function deleteDocument(documentId: string): Promise<void> {
+	const db = await openDb();
+	const tx = db.transaction([DOCUMENTS_STORE, REVISIONS_STORE, ATTACHMENTS_STORE], "readwrite");
+	tx.objectStore(DOCUMENTS_STORE).delete(documentId);
+	await deleteByDocumentId(tx.objectStore(REVISIONS_STORE), documentId);
+	await deleteByDocumentId(tx.objectStore(ATTACHMENTS_STORE), documentId);
 	await transactionDone(tx);
 	db.close();
 }
 
-/** Svuota completamente la cronologia (tutti i documenti e tutte le revisioni). */
+/** Svuota completamente la cronologia (documenti, revisioni e allegati). */
 export async function clearAllHistory(): Promise<void> {
 	const db = await openDb();
-	const tx = db.transaction([DOCUMENTS_STORE, REVISIONS_STORE], "readwrite");
+	const tx = db.transaction([DOCUMENTS_STORE, REVISIONS_STORE, ATTACHMENTS_STORE], "readwrite");
 	tx.objectStore(DOCUMENTS_STORE).clear();
 	tx.objectStore(REVISIONS_STORE).clear();
+	tx.objectStore(ATTACHMENTS_STORE).clear();
 	await transactionDone(tx);
 	db.close();
+}
+
+/**
+ * Salva un file come allegato. `documentId` può essere null quando il file
+ * viene inserito prima che l'editor abbia creato il documento: sarà
+ * adoptAttachments() ad agganciarlo appena l'id è disponibile.
+ */
+export async function saveAttachment(
+	file: File,
+	documentId: string | null,
+): Promise<AttachmentRecord> {
+	const db = await openDb();
+	const record: AttachmentRecord = {
+		id: crypto.randomUUID(),
+		documentId,
+		name: file.name,
+		mimeType: file.type || "application/octet-stream",
+		size: file.size,
+		blob: file,
+		createdAt: Date.now(),
+	};
+	const tx = db.transaction(ATTACHMENTS_STORE, "readwrite");
+	tx.objectStore(ATTACHMENTS_STORE).put(record);
+	await transactionDone(tx);
+	db.close();
+	return record;
+}
+
+/** Recupera un singolo allegato per id. */
+export async function getAttachment(attachmentId: string): Promise<AttachmentRecord | undefined> {
+	const db = await openDb();
+	const tx = db.transaction(ATTACHMENTS_STORE, "readonly");
+	const result = await requestToPromise(tx.objectStore(ATTACHMENTS_STORE).get(attachmentId));
+	db.close();
+	return result;
+}
+
+/**
+ * Elenca gli allegati di un documento, dal più vecchio al più recente. Più file
+ * rilasciati insieme finiscono nello stesso millisecondo: il nome fa da
+ * spareggio, altrimenti il loro ordine a schermo cambierebbe ad ogni lettura.
+ */
+export async function listAttachments(documentId: string): Promise<AttachmentRecord[]> {
+	const db = await openDb();
+	const tx = db.transaction(ATTACHMENTS_STORE, "readonly");
+	const all = await requestToPromise(
+		tx.objectStore(ATTACHMENTS_STORE).index("documentId").getAll(documentId),
+	);
+	db.close();
+	return all.sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name));
+}
+
+/** Aggancia a un documento allegati creati quando l'id non era ancora noto. */
+export async function adoptAttachments(
+	attachmentIds: string[],
+	documentId: string,
+): Promise<void> {
+	if (attachmentIds.length === 0) return;
+	const db = await openDb();
+	const tx = db.transaction(ATTACHMENTS_STORE, "readwrite");
+	const store = tx.objectStore(ATTACHMENTS_STORE);
+	for (const attachmentId of attachmentIds) {
+		const existing = await requestToPromise<AttachmentRecord | undefined>(store.get(attachmentId));
+		if (existing) store.put({ ...existing, documentId });
+	}
+	await transactionDone(tx);
+	db.close();
+}
+
+/**
+ * Conta gli allegati di ogni documento. Usa un cursore sulle sole chiavi
+ * dell'indice: serve a mostrare un badge nella cronologia, quindi i blob non
+ * vanno caricati in memoria.
+ */
+export async function countAttachmentsByDocument(): Promise<Record<string, number>> {
+	const db = await openDb();
+	const tx = db.transaction(ATTACHMENTS_STORE, "readonly");
+	const cursorRequest = tx.objectStore(ATTACHMENTS_STORE).index("documentId").openKeyCursor();
+	const counts: Record<string, number> = {};
+	await new Promise<void>((resolve, reject) => {
+		cursorRequest.onsuccess = () => {
+			const cursor = cursorRequest.result;
+			if (cursor) {
+				const documentId = String(cursor.key);
+				counts[documentId] = (counts[documentId] ?? 0) + 1;
+				cursor.continue();
+			} else {
+				resolve();
+			}
+		};
+		cursorRequest.onerror = () => reject(cursorRequest.error);
+	});
+	db.close();
+	return counts;
 }

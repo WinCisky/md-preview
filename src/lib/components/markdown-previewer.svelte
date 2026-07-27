@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import { mode, ModeWatcher } from "mode-watcher";
 	import { marked } from "$lib/markdown";
 	import DownloadIcon from "@lucide/svelte/icons/download";
 	import HistoryIcon from "@lucide/svelte/icons/history";
+	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
 	import * as Resizable from "$lib/components/ui/resizable/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -14,8 +15,21 @@
 		getDocument,
 		getLatestDocument,
 		listRevisions,
+		saveAttachment,
+		getAttachment,
+		listAttachments,
+		adoptAttachments,
 		type ChangeType,
 	} from "$lib/history-db";
+	import {
+		MAX_ATTACHMENT_BYTES,
+		SANITIZE_CONFIG,
+		attachmentMarkdown,
+		buildExportZip,
+		extractAttachmentIds,
+		resolveAttachmentUrls,
+		type ResolvedAttachment,
+	} from "$lib/attachments";
 
 	const base = import.meta.env.BASE_URL;
 
@@ -43,6 +57,10 @@
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingSaveChangeType: ChangeType = "edit";
 
+	// Allegati salvati prima che il documento esistesse (documentId ancora null):
+	// vengono agganciati da setCurrentDocumentId appena l'id è disponibile.
+	let pendingAttachmentIds: string[] = [];
+
 	// Stato del salvataggio mostrato dal pallino dentro il pulsante "Cronologia".
 	// All'avvio è "saved": non c'è nulla in attesa di essere scritto.
 	type SaveStatus = "saved" | "pending" | "saving" | "error";
@@ -69,11 +87,21 @@
 	let saveStatusClass = $derived(saveStatusClasses[saveStatus]);
 	let saveStatusLabel = $derived(saveStatusLabels[saveStatus]);
 
+	// Object URL degli allegati referenziati dal testo corrente, per id. Popolata
+	// dall'$effect qui sotto man mano che i blob vengono letti da IndexedDB.
+	let attachmentUrls: Record<string, ResolvedAttachment> = $state({});
+
 	let rawHtml = $derived(marked.parse(markdownText) as string);
+	let resolvedHtml = $derived(resolveAttachmentUrls(rawHtml, attachmentUrls));
 	let htmlContent = $state("");
 
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let previewEl: HTMLDivElement | null = $state(null);
+
+	// Profondità dei dragenter/dragleave annidati: senza contatore l'overlay
+	// sparirebbe ogni volta che il cursore passa sopra un figlio del drop target.
+	let dragDepth = $state(0);
+	let isDraggingFiles = $derived(dragDepth > 0);
 
 	// Sotto il breakpoint md di Tailwind i due pannelli vengono impilati
 	// verticalmente invece che affiancati: su schermi stretti due colonne
@@ -135,12 +163,64 @@
 	});
 
 	$effect(() => {
-		const html = rawHtml;
+		const html = resolvedHtml;
 		if (typeof window !== "undefined") {
 			import("dompurify").then((dompurify) => {
-				htmlContent = dompurify.default.sanitize(html);
+				htmlContent = dompurify.default.sanitize(html, SANITIZE_CONFIG);
 			});
 		}
+	});
+
+	/**
+	 * Mantiene allineata `attachmentUrls` ai riferimenti presenti nel testo:
+	 * carica da IndexedDB i blob mancanti e revoca gli object URL degli allegati
+	 * che non sono più citati. Dipendendo solo da markdownText copre senza codice
+	 * aggiuntivo anche il ripristino di un documento o di una revisione.
+	 */
+	$effect(() => {
+		const referenced = new Set(extractAttachmentIds(markdownText));
+		let cancelled = false;
+
+		// untrack: l'effect legge e scrive la stessa mappa che aggiorna, quindi
+		// senza questo si auto-invaliderebbe all'infinito. L'unica dipendenza
+		// che ci interessa è markdownText, già letta qui sopra.
+		untrack(() => {
+			for (const [id, attachment] of Object.entries(attachmentUrls)) {
+				if (referenced.has(id)) continue;
+				URL.revokeObjectURL(attachment.url);
+				delete attachmentUrls[id];
+			}
+
+			for (const id of referenced) {
+				if (attachmentUrls[id]) continue;
+				getAttachment(id)
+					.then((attachment) => {
+						// Il testo può essere cambiato mentre leggevamo: senza questo
+						// controllo si creerebbe un object URL che nessuno revocherà.
+						if (cancelled || !attachment || attachmentUrls[id]) return;
+						attachmentUrls[id] = {
+							url: URL.createObjectURL(attachment.blob),
+							name: attachment.name,
+						};
+					})
+					.catch((err) => {
+						console.error(`Impossibile caricare l'allegato ${id}:`, err);
+					});
+			}
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	// Alla distruzione del componente nessun object URL deve restare appeso.
+	$effect(() => {
+		return () => {
+			for (const attachment of Object.values(attachmentUrls)) {
+				URL.revokeObjectURL(attachment.url);
+			}
+		};
 	});
 
 	// Rileva se un evento "paste" sta sostituendo (quasi) interamente il
@@ -149,9 +229,20 @@
 	// modifica del documento su cui si stava già lavorando. La lettura di
 	// selectionStart/selectionEnd/value avviene sincronicamente nell'handler,
 	// prima che il browser applichi il testo incollato.
-	function handlePaste() {
+	function handlePaste(event: ClipboardEvent) {
 		const textarea = textareaEl;
 		if (!textarea) return;
+
+		// Incollare un file è sempre un inserimento dentro il documento corrente,
+		// mai la sostituzione con un documento diverso: si esce prima
+		// dell'euristica sul full replace.
+		const files = Array.from(event.clipboardData?.files ?? []);
+		if (files.length > 0) {
+			event.preventDefault();
+			insertFiles(files);
+			return;
+		}
+
 		const { selectionStart, selectionEnd, value } = textarea;
 		const selectedLength = selectionEnd - selectionStart;
 		const isFullReplace = value.length === 0 || selectedLength / Math.max(value.length, 1) > 0.8;
@@ -160,6 +251,102 @@
 		} else {
 			pendingPasteIsPartial = true;
 		}
+	}
+
+	function handleDragEnter(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes("Files")) return;
+		dragDepth++;
+	}
+
+	function handleDragOver(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes("Files")) return;
+		// Senza preventDefault il browser rifiuta il drop e apre il file al posto
+		// nostro, abbandonando la pagina.
+		event.preventDefault();
+		event.dataTransfer.dropEffect = "copy";
+	}
+
+	function handleDragLeave(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes("Files")) return;
+		dragDepth = Math.max(0, dragDepth - 1);
+	}
+
+	function handleDrop(event: DragEvent) {
+		dragDepth = 0;
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		if (files.length === 0) return;
+		event.preventDefault();
+		textareaEl?.focus();
+		insertFiles(files);
+	}
+
+	/**
+	 * Salva i file come allegati e ne inserisce i riferimenti markdown al punto
+	 * del cursore. L'inserimento passa da execCommand("insertText"): scrivere
+	 * direttamente markdownText azzererebbe lo stack di undo della textarea,
+	 * mentre così il browser emette un vero evento "input" e sia bind:value sia
+	 * l'$effect di salvataggio si comportano come per una normale digitazione.
+	 */
+	async function insertFiles(files: File[]) {
+		const textarea = textareaEl;
+		if (!textarea) return;
+
+		const accepted = files.filter((file) => {
+			if (file.size === 0) return false;
+			if (file.size > MAX_ATTACHMENT_BYTES) {
+				console.warn(`Allegato "${file.name}" ignorato: supera i ${MAX_ATTACHMENT_BYTES} byte.`);
+				return false;
+			}
+			return true;
+		});
+		if (accepted.length === 0) return;
+
+		try {
+			const snippets: string[] = [];
+			for (const file of accepted) {
+				const attachment = await saveAttachment(file, currentDocumentId);
+				if (currentDocumentId === null) pendingAttachmentIds.push(attachment.id);
+				snippets.push(attachmentMarkdown(attachment));
+			}
+
+			// La revisione risultante va marcata come "paste", non come "edit".
+			pendingPasteIsPartial = true;
+
+			// Il riferimento va su una riga propria: inserito in coda a una riga già
+			// occupata verrebbe assorbito da ciò che la precede (un blocco di codice
+			// non chiuso, una lista, un paragrafo).
+			const caret = textarea.selectionStart ?? textarea.value.length;
+			const leadingNewline = caret > 0 && textarea.value[caret - 1] !== "\n" ? "\n" : "";
+			const text = `${leadingNewline}${snippets.join("\n")}\n`;
+			textarea.focus();
+			// Alcuni motori ritornano true senza inserire nulla: si confronta il
+			// valore prima/dopo invece di fidarsi del solo valore di ritorno.
+			const before = textarea.value;
+			if (!document.execCommand("insertText", false, text) || textarea.value === before) {
+				const start = textarea.selectionStart ?? textarea.value.length;
+				const end = textarea.selectionEnd ?? textarea.value.length;
+				textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+				textarea.setSelectionRange(start + text.length, start + text.length);
+				textarea.dispatchEvent(new Event("input", { bubbles: true }));
+			}
+		} catch (err) {
+			console.error("Impossibile allegare i file:", err);
+			saveStatus = "error";
+		}
+	}
+
+	/**
+	 * Aggancia l'editor a un documento, adottando gli allegati inseriti prima
+	 * che il documento esistesse.
+	 */
+	function setCurrentDocumentId(documentId: string) {
+		currentDocumentId = documentId;
+		if (pendingAttachmentIds.length === 0) return;
+		const ids = pendingAttachmentIds;
+		pendingAttachmentIds = [];
+		adoptAttachments(ids, documentId).catch((err) => {
+			console.error("Impossibile associare gli allegati al documento:", err);
+		});
 	}
 
 	// Aggiorna il pallino solo se nel frattempo non sono arrivate altre modifiche:
@@ -184,7 +371,7 @@
 		} else {
 			createDocument(text, "typed")
 				.then((id) => {
-					currentDocumentId = id;
+					setCurrentDocumentId(id);
 					settleSaveStatus(generation, "saved");
 				})
 				.catch((err) => {
@@ -235,7 +422,7 @@
 			saveStatus = "saving";
 			createDocument(text, "pasted")
 				.then((id) => {
-					currentDocumentId = id;
+					setCurrentDocumentId(id);
 					settleSaveStatus(generation, "saved");
 				})
 				.catch((err) => {
@@ -267,7 +454,7 @@
 			suppressNextSave = true;
 			markdownText = content;
 		}
-		currentDocumentId = documentId;
+		setCurrentDocumentId(documentId);
 		saveStatus = "saved";
 	}
 
@@ -313,9 +500,22 @@
 			window.history.replaceState(null, "", window.location.pathname);
 		}
 
+		// Un file rilasciato fuori dalla drop zone farebbe navigare il browser sul
+		// file stesso, buttando via il documento aperto: qui il drop viene
+		// neutralizzato ovunque tranne che dove lo gestiamo noi.
+		const swallowStrayDrop = (event: DragEvent) => {
+			if (event.defaultPrevented) return;
+			event.preventDefault();
+			if (event.type === "drop") dragDepth = 0;
+		};
+		window.addEventListener("dragover", swallowStrayDrop);
+		window.addEventListener("drop", swallowStrayDrop);
+
 		window.addEventListener("beforeunload", flushPendingSave);
 		window.addEventListener("pagehide", flushPendingSave);
 		return () => {
+			window.removeEventListener("dragover", swallowStrayDrop);
+			window.removeEventListener("drop", swallowStrayDrop);
 			window.removeEventListener("beforeunload", flushPendingSave);
 			window.removeEventListener("pagehide", flushPendingSave);
 		};
@@ -325,14 +525,36 @@
 		window.print();
 	}
 
-	function downloadMarkdown() {
-		const blob = new Blob([markdownText], { type: "text/markdown;charset=utf-8" });
+	function triggerDownload(blob: Blob, fileName: string) {
 		const url = URL.createObjectURL(blob);
 		const link = document.createElement("a");
 		link.href = url;
-		link.download = "document.md";
+		link.download = fileName;
 		link.click();
 		URL.revokeObjectURL(url);
+	}
+
+	/**
+	 * Senza allegati si scarica il solo .md, come sempre. Con allegati serve uno
+	 * zip: i riferimenti "attachment:<id>" non significano nulla fuori dall'app,
+	 * quindi vengono riscritti in percorsi relativi alla cartella "attachments/".
+	 */
+	async function downloadMarkdown() {
+		try {
+			const attachments = currentDocumentId ? await listAttachments(currentDocumentId) : [];
+			const used = new Set(extractAttachmentIds(markdownText));
+			const referenced = attachments.filter((attachment) => used.has(attachment.id));
+			if (referenced.length === 0) {
+				triggerDownload(
+					new Blob([markdownText], { type: "text/markdown;charset=utf-8" }),
+					"document.md",
+				);
+				return;
+			}
+			triggerDownload(await buildExportZip(markdownText, referenced), "document.zip");
+		} catch (err) {
+			console.error("Impossibile esportare il documento:", err);
+		}
 	}
 </script>
 
@@ -349,14 +571,33 @@
 		>
 			<Resizable.Pane defaultSize={50} minSize={20}>
 				<div class="flex h-full min-h-0 flex-col gap-2 p-2 sm:p-4">
-					<Textarea
-						id="markdown-input"
-						class="flex-1 resize-none font-mono p-4 leading-relaxed"
-						placeholder="Type your markdown here..."
-						bind:value={markdownText}
-						bind:ref={textareaEl}
-						onpaste={handlePaste}
-					/>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="relative flex min-h-0 flex-1 flex-col"
+						data-testid="editor-drop-zone"
+						ondragenter={handleDragEnter}
+						ondragover={handleDragOver}
+						ondragleave={handleDragLeave}
+						ondrop={handleDrop}
+					>
+						<Textarea
+							id="markdown-input"
+							class="flex-1 resize-none font-mono p-4 leading-relaxed"
+							placeholder="Type your markdown here..."
+							bind:value={markdownText}
+							bind:ref={textareaEl}
+							onpaste={handlePaste}
+						/>
+						{#if isDraggingFiles}
+							<div
+								class="bg-background/80 border-primary text-primary pointer-events-none absolute inset-0 flex items-center justify-center gap-2 rounded-md border-2 border-dashed text-sm font-medium"
+								data-testid="drop-overlay"
+							>
+								<PaperclipIcon class="size-4" />
+								Rilascia per allegare
+							</div>
+						{/if}
+					</div>
 					<div class="flex flex-wrap gap-2">
 						<Button size="sm" variant="outline" onclick={downloadMarkdown}>
 							<DownloadIcon />
