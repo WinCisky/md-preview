@@ -2,10 +2,9 @@
  * Helper per gli allegati (immagini e file generici) inseriti nell'editor.
  *
  * Nel testo markdown un allegato è sempre e solo un riferimento della forma
- * `attachment:<uuid>`: i byte vivono in IndexedDB (vedi history-db.ts). Questo
- * mantiene compatto il contenuto salvato — ogni revisione è uno snapshot
- * completo del testo, quindi incorporare i file in base64 significherebbe
- * duplicarli ad ogni salvataggio.
+ * `attachment:<uuid>`: i byte vivono in IndexedDB (vedi files-db.ts). Questo
+ * mantiene compatto il contenuto salvato: incorporare i file in base64
+ * significherebbe riscriverli ad ogni salvataggio del testo.
  *
  * Il riferimento viene risolto in due momenti diversi:
  * - a schermo, sostituendolo con un object URL prima della sanitizzazione;
@@ -13,7 +12,7 @@
  */
 
 import { zipSync, strToU8 } from "fflate";
-import type { AttachmentRecord } from "$lib/history-db";
+import type { AttachmentRecord } from "$lib/files-db";
 
 /** Oltre questa soglia il file non viene allegato (IndexedDB è per-origine). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -106,14 +105,16 @@ function safeFileName(name: string, fallback: string): string {
 }
 
 /**
- * Costruisce lo zip esportabile di un documento: `document.md` con i
- * riferimenti riscritti in percorsi relativi, più la cartella `attachments/`
- * con i file veri e propri. Compressione disattivata (`level: 0`): immagini e
- * PDF sono già compressi, ricomprimerli costerebbe tempo senza guadagno.
+ * Costruisce lo zip esportabile di un documento: il markdown (sotto il nome
+ * `markdownName`) con i riferimenti riscritti in percorsi relativi, più la
+ * cartella `attachments/` con i file veri e propri. Compressione disattivata
+ * (`level: 0`): immagini e PDF sono già compressi, ricomprimerli costerebbe
+ * tempo senza guadagno.
  */
 export async function buildExportZip(
 	markdown: string,
 	attachments: AttachmentRecord[],
+	markdownName: string,
 ): Promise<Blob> {
 	const usedNames = new Set<string>();
 	const pathById = new Map<string, string>();
@@ -138,7 +139,9 @@ export async function buildExportZip(
 		// encodeURI e non encodeURIComponent: lo "/" della cartella va preservato.
 		return path ? encodeURI(path) : match;
 	});
-	files["document.md"] = strToU8(rewritten);
+	// Il nome arriva da quello scelto dall'utente nell'albero: senza ripulirlo
+	// uno "/" creerebbe una cartella dentro lo zip.
+	files[safeFileName(markdownName, "document.md")] = strToU8(rewritten);
 
 	return new Blob([zipSync(files, { level: 0 })], { type: "application/zip" });
 }

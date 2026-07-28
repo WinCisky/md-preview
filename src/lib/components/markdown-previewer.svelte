@@ -3,27 +3,25 @@
 	import { mode, ModeWatcher } from "mode-watcher";
 	import { marked } from "$lib/markdown";
 	import DownloadIcon from "@lucide/svelte/icons/download";
-	import HistoryIcon from "@lucide/svelte/icons/history";
 	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
 	import * as Resizable from "$lib/components/ui/resizable/index.js";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
+	import { SIDEBAR_COOKIE_NAME } from "$lib/components/ui/sidebar/constants.js";
   	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn } from "$lib/utils";
 
 	import {
-		createDocument,
-		addRevision,
-		getDocument,
-		getLatestDocument,
-		listRevisions,
+		updateContent,
 		saveAttachment,
 		getAttachment,
 		listAttachments,
 		adoptAttachments,
-		type ChangeType,
-	} from "$lib/history-db";
+		deleteAttachments,
+		type FileNode,
+	} from "$lib/files-db";
+	import { fileTree } from "$lib/file-tree.svelte";
 	import {
 		MAX_ATTACHMENT_BYTES,
 		SANITIZE_CONFIG,
@@ -34,37 +32,28 @@
 		type ResolvedAttachment,
 	} from "$lib/attachments";
 
-	const base = import.meta.env.BASE_URL;
-
-	// Tempo di inattività dopo il quale una modifica in corso viene salvata
-	// come revisione nella cronologia locale (IndexedDB).
+	// Tempo di inattività dopo il quale una modifica in corso viene scritta
+	// sul file attivo (IndexedDB).
 	const SAVE_DEBOUNCE_MS = 1500;
 
-	const initialMarkdownText = "# Hello Markdown\n\nType something on the left to see the preview on the right!\n\n- **Bold** text\n- *Italic* text\n- [A link](https://google.com)\n\n```javascript\nconsole.log('Hello World');\n```";
-	let markdownText = $state(initialMarkdownText);
+	let markdownText = $state("");
 
-	// Id del documento correntemente "attivo" nella cronologia (null finché
-	// non è ancora stato salvato nulla). Variabile semplice, non reattiva:
-	// serve solo a coordinare le chiamate a history-db.ts.
-	let currentDocumentId: string | null = null;
+	// Id del file su cui l'editor sta scrivendo. Copia locale e non reattiva di
+	// fileTree.activeFileId: serve solo a coordinare le scritture su IndexedDB,
+	// e deve restare quella "vecchia" mentre si passa a un altro file.
+	let currentFileId: string | null = null;
 
-	// Coordinamento tra l'handler di paste e l'$effect che osserva markdownText:
-	// - suppressNextSave evita di salvare quando il testo viene impostato in modo
-	//   programmatico (es. ripristino da cronologia) invece che da un vero input utente.
-	// - pendingPasteIsNewDocument / pendingPasteIsPartial registrano cosa è successo
-	//   nell'ultimo evento "paste" prima che l'effect reagisca al cambio di testo.
+	// Evita di salvare quando il testo viene impostato in modo programmatico
+	// (apertura di un file) invece che da un vero input utente.
 	let suppressNextSave = false;
-	let pendingPasteIsNewDocument = false;
-	let pendingPasteIsPartial = false;
 
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
-	let pendingSaveChangeType: ChangeType = "edit";
 
-	// Allegati salvati prima che il documento esistesse (documentId ancora null):
-	// vengono agganciati da setCurrentDocumentId appena l'id è disponibile.
+	// Allegati salvati prima che esistesse un file attivo (nodeId ancora null):
+	// vengono agganciati da adoptPendingAttachments appena l'id è disponibile.
 	let pendingAttachmentIds: string[] = [];
 
-	// Stato del salvataggio mostrato dal pallino dentro il pulsante "Cronologia".
+	// Stato del salvataggio mostrato dal pallino accanto al nome del file.
 	// All'avvio è "saved": non c'è nulla in attesa di essere scritto.
 	type SaveStatus = "saved" | "pending" | "saving" | "error";
 	let saveStatus: SaveStatus = $state("saved");
@@ -87,6 +76,7 @@
 		saving: "Salvataggio in corso…",
 		error: "Salvataggio non riuscito",
 	};
+	const activeFileName = $derived(fileTree.activeFile?.name ?? "Nessun file");
 	let saveStatusClass = $derived(saveStatusClasses[saveStatus]);
 	let saveStatusLabel = $derived(saveStatusLabels[saveStatus]);
 
@@ -123,6 +113,29 @@
 		mediaQuery.addEventListener("change", onChange);
 		return () => mediaQuery.removeEventListener("change", onChange);
 	});
+
+	/**
+	 * Sidebar.Provider scrive già il cookie `sidebar_state` ad ogni apertura o
+	 * chiusura da desktop (vedi il suo `setOpen`), ma nessuno lo rilegge: il sito
+	 * è statico, quindi il ripristino va fatto qui lato client.
+	 *
+	 * Solo desktop: sotto il breakpoint la sidebar è un pannello a scomparsa
+	 * governato da `openMobile`, che parte sempre chiuso; riaprirlo da solo al
+	 * caricamento coprirebbe l'editor.
+	 */
+	function readStoredSidebarOpen(): boolean {
+		if (typeof document === "undefined") return true;
+		if (window.matchMedia(NARROW_QUERY).matches) return true;
+		const stored = document.cookie
+			.split("; ")
+			.find((entry) => entry.startsWith(`${SIDEBAR_COOKIE_NAME}=`))
+			?.slice(SIDEBAR_COOKIE_NAME.length + 1);
+		return stored === undefined ? true : stored === "true";
+	}
+
+	// Letto in modo sincrono durante l'hydration, come isNarrow: leggerlo da un
+	// effect farebbe comparire la sidebar per un istante prima di richiuderla.
+	let sidebarOpen = $state(readStoredSidebarOpen());
 
 	// Guard flag (plain variable, not reactive state) used to ignore the
 	// "scroll" event fired by the browser when we programmatically set
@@ -226,34 +239,15 @@
 		};
 	});
 
-	// Rileva se un evento "paste" sta sostituendo (quasi) interamente il
-	// contenuto corrente: in tal caso lo trattiamo come l'inserimento di un
-	// documento diverso (nuova entry in cronologia) invece che come una
-	// modifica del documento su cui si stava già lavorando. La lettura di
-	// selectionStart/selectionEnd/value avviene sincronicamente nell'handler,
-	// prima che il browser applichi il testo incollato.
+	// Incollare del testo è una normale modifica del file aperto; solo i file
+	// negli appunti richiedono un trattamento a parte, perché vanno salvati
+	// come allegati invece che inseriti alla lettera.
 	function handlePaste(event: ClipboardEvent) {
-		const textarea = textareaEl;
-		if (!textarea) return;
-
-		// Incollare un file è sempre un inserimento dentro il documento corrente,
-		// mai la sostituzione con un documento diverso: si esce prima
-		// dell'euristica sul full replace.
+		if (!textareaEl) return;
 		const files = Array.from(event.clipboardData?.files ?? []);
-		if (files.length > 0) {
-			event.preventDefault();
-			insertFiles(files);
-			return;
-		}
-
-		const { selectionStart, selectionEnd, value } = textarea;
-		const selectedLength = selectionEnd - selectionStart;
-		const isFullReplace = value.length === 0 || selectedLength / Math.max(value.length, 1) > 0.8;
-		if (isFullReplace) {
-			pendingPasteIsNewDocument = true;
-		} else {
-			pendingPasteIsPartial = true;
-		}
+		if (files.length === 0) return;
+		event.preventDefault();
+		insertFiles(files);
 	}
 
 	function handleDragEnter(event: DragEvent) {
@@ -307,13 +301,10 @@
 		try {
 			const snippets: string[] = [];
 			for (const file of accepted) {
-				const attachment = await saveAttachment(file, currentDocumentId);
-				if (currentDocumentId === null) pendingAttachmentIds.push(attachment.id);
+				const attachment = await saveAttachment(file, currentFileId);
+				if (currentFileId === null) pendingAttachmentIds.push(attachment.id);
 				snippets.push(attachmentMarkdown(attachment));
 			}
-
-			// La revisione risultante va marcata come "paste", non come "edit".
-			pendingPasteIsPartial = true;
 
 			// Il riferimento va su una riga propria: inserito in coda a una riga già
 			// occupata verrebbe assorbito da ciò che la precede (un blocco di codice
@@ -338,17 +329,13 @@
 		}
 	}
 
-	/**
-	 * Aggancia l'editor a un documento, adottando gli allegati inseriti prima
-	 * che il documento esistesse.
-	 */
-	function setCurrentDocumentId(documentId: string) {
-		currentDocumentId = documentId;
+	/** Aggancia al file attivo gli allegati inseriti prima che ne esistesse uno. */
+	function adoptPendingAttachments(nodeId: string) {
 		if (pendingAttachmentIds.length === 0) return;
 		const ids = pendingAttachmentIds;
 		pendingAttachmentIds = [];
-		adoptAttachments(ids, documentId).catch((err) => {
-			console.error("Impossibile associare gli allegati al documento:", err);
+		adoptAttachments(ids, nodeId).catch((err) => {
+			console.error("Impossibile associare gli allegati al file:", err);
 		});
 	}
 
@@ -359,38 +346,51 @@
 		saveStatus = status;
 	}
 
-	function performPendingSave(text: string, changeType: ChangeType) {
-		const generation = saveGeneration;
-		saveStatus = "saving";
-		if (currentDocumentId) {
-			addRevision(currentDocumentId, text, changeType)
-				.then(() => {
-					settleSaveStatus(generation, "saved");
-				})
-				.catch((err) => {
-					console.error("Impossibile salvare la revisione nella cronologia:", err);
-					settleSaveStatus(generation, "error");
-				});
-		} else {
-			createDocument(text, "typed")
-				.then((id) => {
-					setCurrentDocumentId(id);
-					settleSaveStatus(generation, "saved");
-				})
-				.catch((err) => {
-					console.error("Impossibile creare il documento nella cronologia:", err);
-					settleSaveStatus(generation, "error");
-				});
+	/**
+	 * Cancella gli allegati di un file che il testo appena salvato non cita più:
+	 * senza riferimento non sono raggiungibili in alcun modo, tenerli farebbe
+	 * solo crescere IndexedDB.
+	 *
+	 * Gira dopo il salvataggio e non nell'$effect che risolve gli object URL:
+	 * quell'effect scatta anche quando si apre un altro file, e cancellerebbe
+	 * gli allegati del file precedente.
+	 */
+	async function collectUnusedAttachments(nodeId: string, savedText: string) {
+		const used = new Set(extractAttachmentIds(savedText));
+		const stale = (await listAttachments(nodeId)).filter((attachment) => !used.has(attachment.id));
+		if (stale.length > 0) {
+			await deleteAttachments(stale.map((attachment) => attachment.id));
 		}
 	}
 
+	function performPendingSave(nodeId: string | null, text: string) {
+		// Senza file attivo non c'è dove scrivere: può succedere solo dopo aver
+		// eliminato l'ultimo file dell'albero.
+		if (!nodeId) {
+			saveStatus = "saved";
+			return;
+		}
+		const generation = saveGeneration;
+		saveStatus = "saving";
+		updateContent(nodeId, text)
+			.then(() => {
+				fileTree.syncContent(nodeId, text);
+				settleSaveStatus(generation, "saved");
+				return collectUnusedAttachments(nodeId, text);
+			})
+			.catch((err) => {
+				console.error("Impossibile salvare il file:", err);
+				settleSaveStatus(generation, "error");
+			});
+	}
+
 	// Salva immediatamente un'eventuale modifica ancora in attesa del debounce
-	// (usato su beforeunload/pagehide per non perdere l'ultima modifica).
+	// (usato su beforeunload/pagehide e prima di aprire un altro file).
 	function flushPendingSave() {
 		if (saveTimer === null) return;
 		clearTimeout(saveTimer);
 		saveTimer = null;
-		performPendingSave(markdownText, pendingSaveChangeType);
+		performPendingSave(currentFileId, markdownText);
 	}
 
 	$effect(() => {
@@ -398,12 +398,6 @@
 
 		if (suppressNextSave) {
 			suppressNextSave = false;
-			return;
-		}
-		// Non salvare finché il testo è ancora quello di default e non è mai
-		// stato creato alcun documento: evita di sporcare la cronologia ad ogni
-		// avvio dell'app quando l'utente non ha ancora scritto/incollato nulla.
-		if (text === initialMarkdownText && !currentDocumentId) {
 			return;
 		}
 
@@ -417,39 +411,36 @@
 		saveGeneration++;
 		saveStatus = "pending";
 
-		if (pendingPasteIsNewDocument) {
-			pendingPasteIsNewDocument = false;
-			pendingPasteIsPartial = false;
-			currentDocumentId = null;
-			const generation = saveGeneration;
-			saveStatus = "saving";
-			createDocument(text, "pasted")
-				.then((id) => {
-					setCurrentDocumentId(id);
-					settleSaveStatus(generation, "saved");
-				})
-				.catch((err) => {
-					console.error("Impossibile creare il documento nella cronologia:", err);
-					settleSaveStatus(generation, "error");
-				});
-			return;
-		}
-
-		pendingSaveChangeType = pendingPasteIsPartial ? "paste" : "edit";
-		pendingPasteIsPartial = false;
+		// currentFileId viene letto allo scadere del debounce, non adesso: una
+		// modifica iniziata prima che l'albero avesse finito di caricare deve
+		// comunque finire nel file che nel frattempo è stato aperto.
 		saveTimer = setTimeout(() => {
 			saveTimer = null;
-			performPendingSave(text, pendingSaveChangeType);
+			performPendingSave(currentFileId, text);
 		}, SAVE_DEBOUNCE_MS);
 	});
 
 	/**
-	 * Applica alla textarea un contenuto proveniente dalla cronologia,
-	 * agganciando l'editor al relativo documento. Il testo restaurato è per
-	 * definizione già persistito, quindi l'$effect di salvataggio va zittito
-	 * (suppressNextSave) e il pallino resta verde.
+	 * Apre un file nell'editor. Le modifiche in sospeso sul file precedente
+	 * vengono scritte prima di cambiare `currentFileId`, altrimenti finirebbero
+	 * nel file appena aperto. Il testo caricato è per definizione già
+	 * persistito, quindi l'$effect di salvataggio va zittito (suppressNextSave)
+	 * e il pallino resta verde.
 	 */
-	function applyRestoredDocument(documentId: string, content: string) {
+	function openFile(node: FileNode | null) {
+		// Il primo file arriva da init(), che è asincrono: se nel frattempo
+		// l'utente ha già scritto qualcosa non glielo si butta via, il suo testo
+		// diventa il contenuto del file appena aperto.
+		const keepUserText = node !== null && currentFileId === null && markdownText !== "";
+
+		// Con keepUserText il debounce in corso non va forzato: scatterà da solo
+		// e a quel punto scriverà nel file appena agganciato.
+		if (!keepUserText && node?.id !== currentFileId) flushPendingSave();
+		currentFileId = node?.id ?? null;
+		if (node) adoptPendingAttachments(node.id);
+		if (keepUserText) return;
+
+		const content = node?.content ?? "";
 		// Se il contenuto coincide già con quello mostrato l'$effect non viene
 		// rieseguito: alzare il flag lo lascerebbe pendente e finirebbe per
 		// sopprimere il salvataggio della prima vera modifica dell'utente.
@@ -457,57 +448,28 @@
 			suppressNextSave = true;
 			markdownText = content;
 		}
-		setCurrentDocumentId(documentId);
 		saveStatus = "saved";
 	}
 
 	onMount(() => {
-		const params = new URLSearchParams(window.location.search);
-		const docId = params.get("doc");
-		if (!docId) {
-			// Nessun documento richiesto esplicitamente: si riprende l'ultimo su
-			// cui si stava lavorando, così ricaricando la pagina non si perde il
-			// contesto. Il testo di default resta solo alla primissima apertura,
-			// quando la cronologia è ancora vuota.
-			getLatestDocument()
-				.then((latest) => {
-					// Se nel frattempo l'utente ha già iniziato a scrivere (o incollato
-					// qualcosa, creando un documento) non sovrascriviamo il suo lavoro.
-					if (!latest || currentDocumentId || markdownText !== initialMarkdownText) return;
-					applyRestoredDocument(latest.id, latest.latestContent);
-				})
-				.catch((err) => {
-					console.error("Impossibile caricare l'ultimo documento dalla cronologia:", err);
-				});
-		} else {
-			const revId = params.get("rev");
-			// Se è richiesta una revisione specifica ne carichiamo il contenuto,
-			// ma restiamo comunque agganciati allo stesso documentId: le
-			// modifiche successive continueranno quel documento.
-			const loadContent = revId
-				? listRevisions(docId).then((revisions) => {
-						const match = revisions.find((revision) => String(revision.id) === revId);
-						return match ? match.content : null;
-					})
-				: getDocument(docId).then((doc) => doc?.latestContent ?? null);
-
-			loadContent
-				.then((content) => {
-					if (content !== null) {
-						applyRestoredDocument(docId, content);
-					}
-				})
-				.catch((err) => {
-					console.error("Impossibile caricare il documento dalla cronologia:", err);
-				});
-			window.history.replaceState(null, "", window.location.pathname);
-		}
+		// Carica l'albero e riapre l'ultimo file su cui si stava lavorando, così
+		// ricaricando la pagina non si perde il contesto. Alla primissima
+		// apertura l'albero è vuoto e init() crea il file di esempio.
+		fileTree.setOpenFileHandler(openFile);
+		fileTree.init().catch((err) => {
+			console.error("Impossibile caricare l'albero dei file:", err);
+			saveStatus = "error";
+		});
 
 		// Un file rilasciato fuori dalla drop zone farebbe navigare il browser sul
 		// file stesso, buttando via il documento aperto: qui il drop viene
 		// neutralizzato ovunque tranne che dove lo gestiamo noi.
+		// Riguarda solo i file trascinati da fuori: un drag interno all'albero
+		// dei file deve poter restare "non accettato" dove il drop è illegale,
+		// altrimenti il browser mostrerebbe comunque il cursore di rilascio.
 		const swallowStrayDrop = (event: DragEvent) => {
 			if (event.defaultPrevented) return;
+			if (!event.dataTransfer?.types.includes("Files")) return;
 			event.preventDefault();
 			if (event.type === "drop") dragDepth = 0;
 		};
@@ -538,23 +500,39 @@
 	}
 
 	/**
+	 * I nodi dell'albero non hanno estensione: è l'esportazione ad aggiungere
+	 * ".md", a meno che l'utente non l'abbia già messa a mano nel nome.
+	 */
+	function exportBaseName(): string {
+		return fileTree.activeFile?.name.trim() || "document";
+	}
+
+	function markdownFileName(): string {
+		const base = exportBaseName();
+		return base.toLowerCase().endsWith(".md") ? base : `${base}.md`;
+	}
+
+	/**
 	 * Senza allegati si scarica il solo .md, come sempre. Con allegati serve uno
 	 * zip: i riferimenti "attachment:<id>" non significano nulla fuori dall'app,
 	 * quindi vengono riscritti in percorsi relativi alla cartella "attachments/".
 	 */
 	async function downloadMarkdown() {
 		try {
-			const attachments = currentDocumentId ? await listAttachments(currentDocumentId) : [];
+			const attachments = currentFileId ? await listAttachments(currentFileId) : [];
 			const used = new Set(extractAttachmentIds(markdownText));
 			const referenced = attachments.filter((attachment) => used.has(attachment.id));
 			if (referenced.length === 0) {
 				triggerDownload(
 					new Blob([markdownText], { type: "text/markdown;charset=utf-8" }),
-					"document.md",
+					markdownFileName(),
 				);
 				return;
 			}
-			triggerDownload(await buildExportZip(markdownText, referenced), "document.zip");
+			triggerDownload(
+				await buildExportZip(markdownText, referenced, markdownFileName()),
+				`${exportBaseName()}.zip`,
+			);
 		} catch (err) {
 			console.error("Impossibile esportare il documento:", err);
 		}
@@ -564,7 +542,7 @@
 <ModeWatcher />
 
 
-<Sidebar.Provider>
+<Sidebar.Provider bind:open={sidebarOpen}>
   <AppSidebar />
   <main class="flex flex-1 flex-col overflow-hidden">
 	<!-- h-svh (non h-screen/100vh): l'altezza "small" del viewport considera le
@@ -582,11 +560,10 @@
 								<div class="flex flex-wrap gap-2 items-center">
 									<Sidebar.Trigger />
 
-									<!-- editable file name -->
-									<!-- svelte-ignore a11y_click_events_have_key_events -->
-									<div class="">
-										<small class="text-sm leading-none font-medium">Document name</small>
-									</div>
+									<small
+										class="text-sm leading-none font-medium"
+										data-testid="active-file-name">{activeFileName}</small
+									>
 									<div
 										class={cn(
 											"size-3 rounded-full",
@@ -596,11 +573,16 @@
 									></div>
 								</div>
 								<div class="flex flex-wrap gap-2 items-center">
-									<Button size="sm" variant="outline" onclick={downloadMarkdown}>
+									<Button
+										size="sm"
+										variant="outline"
+										aria-label="Download Markdown"
+										onclick={downloadMarkdown}
+									>
 										<DownloadIcon />
 										.md
 									</Button>
-									<Button size="sm" onclick={downloadPdf}>
+									<Button size="sm" aria-label="Download PDF" onclick={downloadPdf}>
 										<DownloadIcon />
 										.pdf
 									</Button>

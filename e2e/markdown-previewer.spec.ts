@@ -54,22 +54,17 @@ test.describe('Markdown Previewer', () => {
 			}));
 			expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 
-			// I pulsanti vanno a capo su più righe e restano tutti dentro il viewport.
+			// I pulsanti restano tutti dentro il viewport.
 			const buttons = [
 				page.getByRole('button', { name: 'Download Markdown' }),
 				page.getByRole('button', { name: 'Download PDF' }),
-				page.getByRole('link', { name: /Cronologia/ }),
 			];
-			const boxes = [];
 			for (const button of buttons) {
 				const box = await button.boundingBox();
 				expect(box).not.toBeNull();
 				expect(box!.x + box!.width).toBeLessThanOrEqual(360);
 				expect(box!.y + box!.height).toBeLessThanOrEqual(640);
-				boxes.push(box!);
 			}
-			// "Cronologia" finisce su una riga sotto gli altri due.
-			expect(boxes[2].y).toBeGreaterThan(boxes[0].y);
 		});
 	});
 

@@ -9,7 +9,7 @@
 
 # md-preview
 
-A web-based Markdown previewer that renders your Markdown in real time. Type or paste on the left, see the rendered output on the right — with syntax highlighting, dark/light mode, scroll sync between panes, and a local revision history saved to IndexedDB.
+A web-based Markdown previewer that renders your Markdown in real time. Type or paste on the left, see the rendered output on the right — with syntax highlighting, dark/light mode, scroll sync between panes, and a local file tree saved to IndexedDB.
 
 ## Features
 
@@ -18,9 +18,9 @@ A web-based Markdown previewer that renders your Markdown in real time. Type or 
 - **Syntax highlighting** — Code blocks highlighted with `highlight.js`
 - **Sanitized output** — HTML rendered via DOMPurify for safe rendering
 - **Dark / light mode** — Theme follows your system color scheme via [`mode-watcher`](https://github.com/ArnaudBarre/mode-watcher)
-- **Local revision history** — Documents and their changes are saved to IndexedDB with timestamps, change types (typed/pasted/edit), and per-revision access via URL (`?doc=…&rev=…`)
-- **Download options** — Export as Markdown (`.md`) or PDF (via print dialog)
-- **Paste detection** — Distinguishes full-content paste from inline edits to manage history entries correctly
+- **Local file tree** — Files and folders live in IndexedDB; create, rename, delete and move them by drag & drop or from the right-click menu. Only the latest content of each file is kept
+- **Attachments** — Images and files dropped or pasted into the editor are stored as blobs and referenced as `attachment:<id>`; an attachment is deleted as soon as the text stops referencing it
+- **Download options** — Export as Markdown (`.md`) or PDF (via print dialog); a document with attachments is exported as a `.zip`
 
 ## Getting Started
 
@@ -49,5 +49,5 @@ The production build is output to `./dist/`.
 2. The text is parsed with [`marked`](https://github.com/markedjs/marked) and rendered as HTML
 3. The HTML is sanitized with [`DOMPurify`](https://github.com/DanAyer/dompurify) before rendering
 4. Code blocks are syntax-highlighted by `highlight.js`
-5. A debounced save writes each document (and its revisions) to IndexedDB via `history-db`
+5. A debounced save writes the active file back to IndexedDB via `files-db`
 6. The scroll position of the textarea and preview pane is synced proportionally

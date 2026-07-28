@@ -8,6 +8,8 @@ import {
 	dropFiles,
 	gotoEditor,
 	pasteFiles,
+	treeContextMenu,
+	waitForNodeContent,
 	waitForRecordCount,
 } from './helpers';
 
@@ -51,9 +53,8 @@ test.describe('Attachments', () => {
 		await expect(image).toHaveAttribute('src', /^blob:/);
 		await expect(image).toHaveAttribute('alt', 'pic.png');
 
-		// L'allegato è stato inserito prima che esistesse un documento: il testo
-		// modificato ne fa nascere uno e l'allegato deve essere stato adottato.
-		await waitForRecordCount(page, 'documents', 1);
+		// Il riferimento all'allegato è stato salvato nel file aperto.
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 	});
 
 	test('shows a drop overlay only while files are being dragged over the editor', async ({
@@ -93,24 +94,26 @@ test.describe('Attachments', () => {
 	test('re-renders attachments after a reload', async ({ page }) => {
 		await gotoEditor(page);
 		await dropFiles(page, [PNG]);
-		await waitForRecordCount(page, 'documents', 1);
 		await waitForRecordCount(page, 'attachments', 1);
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
 		await page.goto('./');
 
-		// Il documento viene ripreso dalla cronologia e il blob riletto da IndexedDB.
+		// Il file viene riaperto e il blob riletto da IndexedDB.
 		await expect(page.locator('#markdown-input')).toHaveValue(/attachment:[0-9a-f-]+/);
 		await expect(page.locator('#preview-pane img')).toHaveAttribute('src', /^blob:/);
 	});
 
-	test('exports a plain .md when the document has no attachments', async ({ page }) => {
+	// I nodi dell'albero non hanno estensione: è l'esportazione ad aggiungere
+	// ".md" al nome del file aperto.
+	test('exports a plain .md named after the open file', async ({ page }) => {
 		await gotoEditor(page);
 
 		const downloadPromise = page.waitForEvent('download');
 		await page.getByRole('button', { name: 'Download Markdown' }).click();
 		const download = await downloadPromise;
 
-		expect(download.suggestedFilename()).toBe('document.md');
+		expect(download.suggestedFilename()).toBe('welcome.md');
 	});
 
 	test('exports a zip with the attachments folder when the document has attachments', async ({
@@ -118,56 +121,69 @@ test.describe('Attachments', () => {
 	}) => {
 		await gotoEditor(page);
 		await dropFiles(page, [PNG, PDF]);
-		await waitForRecordCount(page, 'documents', 1);
 		await waitForRecordCount(page, 'attachments', 2);
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
 		const downloadPromise = page.waitForEvent('download');
 		await page.getByRole('button', { name: 'Download Markdown' }).click();
 		const download = await downloadPromise;
 
-		expect(download.suggestedFilename()).toBe('document.zip');
+		expect(download.suggestedFilename()).toBe('welcome.zip');
 
 		const zipPath = await download.path();
 		const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
 		expect(Object.keys(entries).sort()).toEqual([
 			'attachments/pic.png',
 			'attachments/spec.pdf',
-			'document.md',
+			'welcome.md',
 		]);
 
 		// I riferimenti "attachment:<id>" sono stati riscritti in percorsi relativi.
-		const markdown = strFromU8(entries['document.md']);
+		const markdown = strFromU8(entries['welcome.md']);
 		expect(markdown).toContain('![pic.png](attachments/pic.png)');
 		expect(markdown).toContain('[spec.pdf](attachments/spec.pdf)');
 		expect(markdown).not.toContain('attachment:');
 	});
 
-	test('lists attachments in the history dropdown and deletes them with the document', async ({
-		page,
-	}) => {
+	test('deletes an attachment once the text no longer references it', async ({ page }) => {
+		await gotoEditor(page);
+		await dropFiles(page, [PNG]);
+		await waitForRecordCount(page, 'attachments', 1);
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
+
+		// Rimosso il riferimento, il blob non è più raggiungibile: va cancellato.
+		await page.locator('#markdown-input').fill('# Senza allegati');
+		await waitForRecordCount(page, 'attachments', 0);
+		await expect(page.locator('#preview-pane img')).toHaveCount(0);
+	});
+
+	test('deletes the attachments of a file removed from the tree', async ({ page }) => {
 		await gotoEditor(page);
 		await dropFiles(page, [PNG, PDF]);
-		await waitForRecordCount(page, 'documents', 1);
 		await waitForRecordCount(page, 'attachments', 2);
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
-		await page.goto('./history');
+		await treeContextMenu(page, 'welcome', 'Elimina');
 
-		const document = page.getByTestId('history-document');
-		await expect(document).toHaveCount(1);
-		await expect(document.getByTestId('history-attachment-count')).toHaveText('2');
+		await expect(page.getByTestId('tree-file')).toHaveCount(0);
+		await waitForRecordCount(page, 'attachments', 0);
+	});
 
-		await document.getByTestId('history-document-title').click();
-		const attachments = page.getByTestId('history-attachment');
-		await expect(attachments).toHaveCount(2);
-		await expect(attachments.first()).toContainText('pic.png');
-		await expect(attachments.nth(1)).toContainText('spec.pdf');
-		// Le revisioni restano visibili nello stesso pannello.
-		await expect(page.getByTestId('history-revision')).not.toHaveCount(0);
+	test('keeps the attachments of a file that is not the one being edited', async ({ page }) => {
+		await gotoEditor(page);
+		await dropFiles(page, [PNG]);
+		await waitForRecordCount(page, 'attachments', 1);
+		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
-		page.once('dialog', (dialog) => dialog.accept());
-		await document.getByRole('button', { name: 'Elimina documento' }).click();
+		// Aprire un altro file cambia interamente il testo dell'editor: la
+		// raccolta degli allegati inutilizzati non deve scambiarlo per una
+		// rimozione dei riferimenti del file precedente.
+		await page.getByTestId('tree-root').click();
+		await page.getByRole('button', { name: 'New file' }).click();
+		await page.getByTestId('tree-rename-input').press('Enter');
+		await page.locator('#markdown-input').fill('# Un altro file');
+		await waitForNodeContent(page, 'untitled', /# Un altro file/);
 
-		await expect(page.getByText('Nessun documento in cronologia')).toBeVisible();
-		expect(await countRecords(page, 'attachments')).toBe(0);
+		expect(await countRecords(page, 'attachments')).toBe(1);
 	});
 });
