@@ -6,9 +6,12 @@
 	import HistoryIcon from "@lucide/svelte/icons/history";
 	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
 	import * as Resizable from "$lib/components/ui/resizable/index.js";
+	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
+  	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn } from "$lib/utils";
+
 	import {
 		createDocument,
 		addRevision,
@@ -560,84 +563,97 @@
 
 <ModeWatcher />
 
-<!-- h-svh (non h-screen/100vh): l'altezza "small" del viewport considera le
+
+<Sidebar.Provider>
+  <AppSidebar />
+  <main class="flex flex-1 flex-col overflow-hidden">
+	<!-- h-svh (non h-screen/100vh): l'altezza "small" del viewport considera le
      barre del browser mobile come visibili, così la toolbar in fondo non
      finisce mai coperta quando compaiono. -->
-<div class="flex h-svh flex-col print:h-auto">
-	<div class="min-h-0 flex-1 print:hidden">
-		<Resizable.PaneGroup
-			direction={isNarrow ? "vertical" : "horizontal"}
-			autoSaveId={isNarrow ? "markdown-previewer-layout-vertical" : "markdown-previewer-layout"}
-		>
-			<Resizable.Pane defaultSize={50} minSize={20}>
-				<div class="flex h-full min-h-0 flex-col gap-2 p-2 sm:p-4">
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div
-						class="relative flex min-h-0 flex-1 flex-col"
-						data-testid="editor-drop-zone"
-						ondragenter={handleDragEnter}
-						ondragover={handleDragOver}
-						ondragleave={handleDragLeave}
-						ondrop={handleDrop}
-					>
-						<Textarea
-							id="markdown-input"
-							class="flex-1 resize-none font-mono p-4 leading-relaxed"
-							placeholder="Type your markdown here..."
-							bind:value={markdownText}
-							bind:ref={textareaEl}
-							onpaste={handlePaste}
-						/>
-						{#if isDraggingFiles}
-							<div
-								class="bg-background/80 border-primary text-primary pointer-events-none absolute inset-0 flex items-center justify-center gap-2 rounded-md border-2 border-dashed text-sm font-medium"
-								data-testid="drop-overlay"
-							>
-								<PaperclipIcon class="size-4" />
-								Rilascia per allegare
-							</div>
-						{/if}
-					</div>
-					<div class="flex flex-wrap gap-2">
-						<Button size="sm" variant="outline" onclick={downloadMarkdown}>
-							<DownloadIcon />
-							Download Markdown
-						</Button>
-						<Button size="sm" onclick={downloadPdf}>
-							<DownloadIcon />
-							Download PDF
-						</Button>
-						<Button size="sm" variant="outline" href={`${base}history`}>
-							<HistoryIcon />
-							Cronologia
-							<span
-								class={cn("size-2 shrink-0 rounded-full", saveStatusClass)}
-								data-testid="save-status"
-								data-status={saveStatus}
-								title={saveStatusLabel}
-								aria-label={saveStatusLabel}
-								role="status"
-							></span>
-						</Button>
-					</div>
-				</div>
-			</Resizable.Pane>
-			<Resizable.Handle />
-			<Resizable.Pane defaultSize={50} minSize={20}>
-				<div id="preview-pane" class="h-full overflow-y-auto p-4 sm:p-8" bind:this={previewEl}>
-					<article class="markdown-body">
-						{@html htmlContent}
-					</article>
-				</div>
-			</Resizable.Pane>
-		</Resizable.PaneGroup>
-	</div>
+		<div class="flex h-svh flex-col print:h-auto flex-1">
+			<div class="min-h-0 flex-1 print:hidden">
+				<Resizable.PaneGroup
+					direction={isNarrow ? "vertical" : "horizontal"}
+					autoSaveId={isNarrow ? "markdown-previewer-layout-vertical" : "markdown-previewer-layout"}
+				>
+					<Resizable.Pane defaultSize={50} minSize={20}>
+						<div class="flex h-full min-h-0 flex-col gap-2 p-2 sm:gap-4 sm:p-4">
+							<div class="flex flex-wrap gap-2 items-center justify-between">
+								<div class="flex flex-wrap gap-2 items-center">
+									<Sidebar.Trigger />
 
-	<!-- Print-only rendition: bypasses the resizable split view so the exported
-	     PDF contains the full, unclipped markdown output instead of a fixed-size pane.
-	     Uses a <div> rather than <article> so it stays out of the way of the
-	     single semantic <article> the app exposes to assistive tech and tests. -->
-	<div class="markdown-body hidden print:block">
-		{@html htmlContent}
-	</div>
-</div>
+									<!-- editable file name -->
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<div class="">
+										<small class="text-sm leading-none font-medium">Document name</small>
+									</div>
+									<div
+										class={cn(
+											"size-3 rounded-full",
+											saveStatusClass,
+										)}
+										title={saveStatusLabel}
+									></div>
+								</div>
+								<div class="flex flex-wrap gap-2 items-center">
+									<Button size="sm" variant="outline" onclick={downloadMarkdown}>
+										<DownloadIcon />
+										.md
+									</Button>
+									<Button size="sm" onclick={downloadPdf}>
+										<DownloadIcon />
+										.pdf
+									</Button>
+								</div>
+							</div>
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="relative flex min-h-0 flex-1 flex-col"
+								data-testid="editor-drop-zone"
+								ondragenter={handleDragEnter}
+								ondragover={handleDragOver}
+								ondragleave={handleDragLeave}
+								ondrop={handleDrop}
+							>
+								<Textarea
+									id="markdown-input"
+									class="flex-1 resize-none font-mono p-4 leading-relaxed"
+									placeholder="Type your markdown here..."
+									bind:value={markdownText}
+									bind:ref={textareaEl}
+									onpaste={handlePaste}
+								/>
+								{#if isDraggingFiles}
+									<div
+										class="bg-background/80 border-primary text-primary pointer-events-none absolute inset-0 flex items-center justify-center gap-2 rounded-md border-2 border-dashed text-sm font-medium"
+										data-testid="drop-overlay"
+									>
+										<PaperclipIcon class="size-4" />
+										Rilascia per allegare
+									</div>
+								{/if}
+							</div>
+						</div>
+					</Resizable.Pane>
+					<Resizable.Handle />
+					<Resizable.Pane defaultSize={50} minSize={20}>
+						<div id="preview-pane" class="h-full overflow-y-auto p-4 sm:p-8" bind:this={previewEl}>
+							<article class="markdown-body">
+								{@html htmlContent}
+							</article>
+						</div>
+					</Resizable.Pane>
+				</Resizable.PaneGroup>
+			</div>
+
+			<!-- Print-only rendition: bypasses the resizable split view so the exported
+				PDF contains the full, unclipped markdown output instead of a fixed-size pane.
+				Uses a <div> rather than <article> so it stays out of the way of the
+				single semantic <article> the app exposes to assistive tech and tests. -->
+			<div class="markdown-body hidden print:block">
+				{@html htmlContent}
+			</div>
+		</div>
+
+  </main>
+</Sidebar.Provider>
