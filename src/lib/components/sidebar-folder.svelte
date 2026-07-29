@@ -3,7 +3,7 @@
 	import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
 	import FolderIcon from "@lucide/svelte/icons/folder";
 	import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
-	// Import di sé: l'albero è ricorsivo.
+	// Self-import: the tree is recursive.
 	import SidebarFolder from "./sidebar-folder.svelte";
 	import SidebarFile from "./sidebar-file.svelte";
 	import TreeMenuItems from "./tree-menu-items.svelte";
@@ -26,8 +26,8 @@
 
 	function handleDragOver(event: DragEvent) {
 		if (!fileTree.canMove(fileTree.dragId, node.id)) return;
-		// preventDefault solo quando lo spostamento è legale: altrove il browser
-		// mostra il cursore "vietato" senza che serva altro codice.
+		// preventDefault only when the move is legal: elsewhere the browser
+		// shows the "forbidden" cursor with no extra code needed.
 		event.preventDefault();
 		event.stopPropagation();
 		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";

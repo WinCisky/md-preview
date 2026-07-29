@@ -13,9 +13,9 @@
 
 	const isRootDropTarget = $derived(fileTree.dropTargetId === ROOT_ID);
 
-	// Lo spazio vuoto sotto l'elenco è la destinazione "radice", sia per il drop
-	// sia per il menu contestuale. Sta fuori dalle righe: annidare un
-	// ContextMenu.Trigger dentro l'altro aprirebbe due menu insieme.
+	// The empty space below the list is the "root" target, both for the drop and
+	// for the context menu. It sits outside the rows: nesting one
+	// ContextMenu.Trigger inside another would open two menus at once.
 	function handleDragOver(event: DragEvent) {
 		if (!fileTree.canMove(fileTree.dragId, ROOT_ID)) return;
 		event.preventDefault();
@@ -33,8 +33,8 @@
 	<Sidebar.Content>
 		<Sidebar.Group class="min-h-0 flex-1">
 			<Sidebar.GroupLabel>Documents</Sidebar.GroupLabel>
-			<!-- GroupAction è posizionato in assoluto a right-3: il secondo pulsante
-			     va spostato a sinistra per non finirci sopra. -->
+			<!-- GroupAction is absolutely positioned at right-3: the second button
+			     has to be shifted left so it does not land on top of it. -->
 			<Sidebar.GroupAction
 				class="right-9"
 				title="New file"

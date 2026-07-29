@@ -1,17 +1,17 @@
 /**
- * Layer di persistenza locale (IndexedDB) per l'albero dei file dell'app.
- * Nessuna dipendenza esterna: wrapper nativo su indexedDB con due object store:
+ * Local persistence layer (IndexedDB) for the app's file tree. No external
+ * dependencies: a native wrapper around indexedDB with two object stores:
  *
- * - "nodes": un record per ogni file o cartella. Di un file si conserva solo
- *   l'ultimo contenuto noto: non esiste uno storico delle revisioni.
- * - "attachments": i file (immagini o allegati generici) trascinati/incollati
- *   nell'editor. Il markdown non contiene i byte ma solo un riferimento
- *   "attachment:<id>", risolto a un object URL al momento del rendering.
- *   Un allegato non più referenziato dal testo viene cancellato.
+ * - "nodes": one record per file or folder. For a file only the latest known
+ *   content is kept: there is no revision history.
+ * - "attachments": the files (images or generic attachments) dragged/pasted
+ *   into the editor. The markdown does not contain the bytes but only an
+ *   "attachment:<id>" reference, resolved to an object URL at render time. An
+ *   attachment no longer referenced by the text is deleted.
  *
- * Tutte le funzioni sono pensate per essere chiamate solo lato client
- * (dentro onMount/effect/event handler di Svelte), mai a livello di modulo,
- * così da non essere eseguite durante il pass di SSR di Astro.
+ * All the functions are meant to be called on the client only (inside Svelte
+ * onMount/effect/event handlers), never at module level, so they are not run
+ * during Astro's SSR pass.
  */
 
 const DB_NAME = "md-preview-files";
@@ -22,9 +22,9 @@ const ATTACHMENTS_STORE = "attachments";
 export type NodeType = "file" | "folder";
 
 /**
- * Sentinella per i nodi in cima all'albero. IndexedDB non indicizza le chiavi
- * nulle: con `parentId: null` i nodi di primo livello sarebbero invisibili a
- * qualsiasi query sull'indice "parentId".
+ * Sentinel for the nodes at the top of the tree. IndexedDB does not index null
+ * keys: with `parentId: null` the top-level nodes would be invisible to any
+ * query on the "parentId" index.
  */
 export const ROOT_ID = "root";
 
@@ -33,12 +33,12 @@ export interface FileNode {
 	type: NodeType;
 	parentId: string;
 	name: string;
-	/** Stringa vuota per le cartelle. */
+	/** Empty string for folders. */
 	content: string;
 	/**
-	 * Solo per le cartelle: se il loro contenuto è mostrato aperto nella
-	 * sidebar. Assente sui record scritti prima che il campo esistesse, e in
-	 * quel caso vale come "chiusa".
+	 * Folders only: whether their content is shown expanded in the sidebar.
+	 * Absent on records written before the field existed, and in that case it
+	 * counts as "collapsed".
 	 */
 	expanded?: boolean;
 	createdAt: number;
@@ -47,7 +47,7 @@ export interface FileNode {
 
 export interface AttachmentRecord {
 	id: string;
-	/** null finché il file che lo contiene non è ancora stato creato. */
+	/** null until the file containing it has been created. */
 	nodeId: string | null;
 	name: string;
 	mimeType: string;
@@ -73,7 +73,7 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
 
 function openDb(): Promise<IDBDatabase> {
 	if (typeof indexedDB === "undefined") {
-		return Promise.reject(new Error("IndexedDB non disponibile in questo ambiente."));
+		return Promise.reject(new Error("IndexedDB is not available in this environment."));
 	}
 	return new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -84,9 +84,9 @@ function openDb(): Promise<IDBDatabase> {
 				nodes.createIndex("parentId", "parentId");
 				nodes.createIndex("updatedAt", "updatedAt");
 			}
-			// L'indice "nodeId" non contiene i record con nodeId null: gli allegati
-			// ancora "orfani" restano invisibili alle query per file finché
-			// adoptAttachments() non li aggancia.
+			// The "nodeId" index does not contain records with a null nodeId: the
+			// still-"orphaned" attachments stay invisible to per-file queries
+			// until adoptAttachments() hooks them up.
 			if (!db.objectStoreNames.contains(ATTACHMENTS_STORE)) {
 				const attachments = db.createObjectStore(ATTACHMENTS_STORE, { keyPath: "id" });
 				attachments.createIndex("nodeId", "nodeId");
@@ -97,7 +97,7 @@ function openDb(): Promise<IDBDatabase> {
 	});
 }
 
-/** Tutti i nodi dell'albero. L'albero è piccolo: la gerarchia si costruisce in memoria. */
+/** Every node in the tree. The tree is small: the hierarchy is built in memory. */
 export async function listNodes(): Promise<FileNode[]> {
 	const db = await openDb();
 	const tx = db.transaction(NODES_STORE, "readonly");
@@ -106,7 +106,7 @@ export async function listNodes(): Promise<FileNode[]> {
 	return all;
 }
 
-/** Recupera un singolo nodo per id. */
+/** Fetches a single node by id. */
 export async function getNode(nodeId: string): Promise<FileNode | undefined> {
 	const db = await openDb();
 	const tx = db.transaction(NODES_STORE, "readonly");
@@ -115,7 +115,7 @@ export async function getNode(nodeId: string): Promise<FileNode | undefined> {
 	return result;
 }
 
-/** Crea un file o una cartella. Ritorna il record creato. */
+/** Creates a file or a folder. Returns the created record. */
 export async function createNode(options: {
 	type: NodeType;
 	name: string;
@@ -140,7 +140,7 @@ export async function createNode(options: {
 	return node;
 }
 
-/** Applica una modifica parziale a un nodo esistente, aggiornandone `updatedAt`. */
+/** Applies a partial change to an existing node, updating its `updatedAt`. */
 async function patchNode(nodeId: string, patch: Partial<FileNode>): Promise<FileNode> {
 	const db = await openDb();
 	const tx = db.transaction(NODES_STORE, "readwrite");
@@ -148,7 +148,7 @@ async function patchNode(nodeId: string, patch: Partial<FileNode>): Promise<File
 	const existing = await requestToPromise<FileNode | undefined>(store.get(nodeId));
 	if (!existing) {
 		db.close();
-		throw new Error(`Nodo ${nodeId} non trovato.`);
+		throw new Error(`Node ${nodeId} not found.`);
 	}
 	const updated: FileNode = { ...existing, ...patch, updatedAt: Date.now() };
 	store.put(updated);
@@ -170,9 +170,10 @@ export function moveNode(nodeId: string, parentId: string): Promise<FileNode> {
 }
 
 /**
- * Apre o chiude una cartella. Non passa da patchNode() di proposito: aprire una
- * cartella non è una modifica del documento, quindi `updatedAt` non va toccato
- * o l'ultimo file aperto e l'ordinamento ne risentirebbero.
+ * Expands or collapses a folder. It deliberately does not go through
+ * patchNode(): expanding a folder is not a change to the document, so
+ * `updatedAt` must not be touched or the last opened file and the ordering
+ * would be affected.
  */
 export async function setNodeExpanded(nodeId: string, expanded: boolean): Promise<void> {
 	const db = await openDb();
@@ -185,11 +186,10 @@ export async function setNodeExpanded(nodeId: string, expanded: boolean): Promis
 }
 
 /**
- * Elimina un nodo con tutto il suo sottoalbero e gli allegati dei file
- * contenuti. La raccolta degli id avviene prima della transazione di scrittura:
- * una transazione IndexedDB si chiude da sola appena il microtask corrente
- * finisce senza richieste in volo, quindi non può attraversare un `await` su
- * una promise esterna.
+ * Deletes a node with its whole subtree and the attachments of the files it
+ * contains. The ids are collected before the write transaction: an IndexedDB
+ * transaction closes itself as soon as the current microtask ends with no
+ * requests in flight, so it cannot span an `await` on an external promise.
  */
 export async function deleteNode(nodeId: string): Promise<void> {
 	const all = await listNodes();
@@ -222,7 +222,7 @@ export async function deleteNode(nodeId: string): Promise<void> {
 	db.close();
 }
 
-/** Cancella ogni record raggiunto dal cursore. Non attende: la transazione lo fa. */
+/** Deletes every record the cursor reaches. Does not await: the transaction does. */
 function deleteByCursor(cursorRequest: IDBRequest<IDBCursorWithValue | null>): void {
 	cursorRequest.onsuccess = () => {
 		const cursor = cursorRequest.result;
@@ -233,8 +233,8 @@ function deleteByCursor(cursorRequest: IDBRequest<IDBCursorWithValue | null>): v
 }
 
 /**
- * Il file aggiornato più di recente, o undefined se non ce ne sono. Usa
- * l'indice "updatedAt" con un cursore in ordine inverso, saltando le cartelle.
+ * The most recently updated file, or undefined if there are none. Uses the
+ * "updatedAt" index with a reverse-order cursor, skipping folders.
  */
 export async function getLatestFile(): Promise<FileNode | undefined> {
 	const db = await openDb();
@@ -258,9 +258,9 @@ export async function getLatestFile(): Promise<FileNode | undefined> {
 }
 
 /**
- * Salva un file come allegato. `nodeId` può essere null quando il file viene
- * inserito prima che l'editor abbia un file attivo: sarà adoptAttachments() ad
- * agganciarlo appena l'id è disponibile.
+ * Saves a file as an attachment. `nodeId` can be null when the file is inserted
+ * before the editor has an active file: adoptAttachments() will hook it up as
+ * soon as the id is available.
  */
 export async function saveAttachment(file: File, nodeId: string | null): Promise<AttachmentRecord> {
 	const db = await openDb();
@@ -280,7 +280,7 @@ export async function saveAttachment(file: File, nodeId: string | null): Promise
 	return record;
 }
 
-/** Recupera un singolo allegato per id. */
+/** Fetches a single attachment by id. */
 export async function getAttachment(attachmentId: string): Promise<AttachmentRecord | undefined> {
 	const db = await openDb();
 	const tx = db.transaction(ATTACHMENTS_STORE, "readonly");
@@ -290,9 +290,9 @@ export async function getAttachment(attachmentId: string): Promise<AttachmentRec
 }
 
 /**
- * Elenca gli allegati di un file, dal più vecchio al più recente. Più file
- * rilasciati insieme finiscono nello stesso millisecondo: il nome fa da
- * spareggio, altrimenti il loro ordine a schermo cambierebbe ad ogni lettura.
+ * Lists a file's attachments, from oldest to newest. Several files dropped
+ * together land in the same millisecond: the name breaks the tie, otherwise
+ * their on-screen order would change on every read.
  */
 export async function listAttachments(nodeId: string): Promise<AttachmentRecord[]> {
 	const db = await openDb();
@@ -304,7 +304,7 @@ export async function listAttachments(nodeId: string): Promise<AttachmentRecord[
 	return all.sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name));
 }
 
-/** Aggancia a un file allegati creati quando l'id non era ancora noto. */
+/** Hooks up to a file attachments created when the id was not yet known. */
 export async function adoptAttachments(attachmentIds: string[], nodeId: string): Promise<void> {
 	if (attachmentIds.length === 0) return;
 	const db = await openDb();
@@ -318,7 +318,7 @@ export async function adoptAttachments(attachmentIds: string[], nodeId: string):
 	db.close();
 }
 
-/** Elimina gli allegati indicati: usato quando il testo non li referenzia più. */
+/** Deletes the given attachments: used when the text no longer references them. */
 export async function deleteAttachments(attachmentIds: string[]): Promise<void> {
 	if (attachmentIds.length === 0) return;
 	const db = await openDb();

@@ -22,10 +22,10 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 
-// Registra solo un sottoinsieme di linguaggi comuni (bundle più leggero
-// rispetto al pacchetto "highlight.js" completo). Per aggiungere supporto
-// a un altro linguaggio, importare il modulo corrispondente da
-// "highlight.js/lib/languages/*" e registrarlo qui sotto.
+// Registers only a subset of common languages (a lighter bundle than the full
+// "highlight.js" package). To add support for another language, import the
+// corresponding module from "highlight.js/lib/languages/*" and register it
+// below.
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("shell", bash);
 hljs.registerLanguage("sh", bash);
@@ -54,14 +54,14 @@ hljs.registerLanguage("html", xml);
 hljs.registerLanguage("yaml", yaml);
 hljs.registerLanguage("yml", yaml);
 
-// Istanza dedicata di `marked` (non l'export globale del pacchetto) così da
-// non condizionare eventuali altri consumatori di "marked" nell'app.
+// A dedicated `marked` instance (not the package's global export) so as not to
+// affect any other consumers of "marked" in the app.
 export const marked = new Marked(
 	markedHighlight({
 		langPrefix: "hljs language-",
 		highlight(code, lang) {
-			// Nessun linguaggio specificato (```) o linguaggio non registrato:
-			// lascia il codice invariato, senza colorazione.
+			// No language specified (```) or an unregistered language: leave the
+			// code unchanged, without highlighting.
 			const language = hljs.getLanguage(lang) ? lang : undefined;
 			if (!language) return code;
 			return hljs.highlight(code, { language }).value;

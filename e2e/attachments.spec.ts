@@ -14,7 +14,7 @@ import {
 } from './helpers';
 
 const PNG = { name: 'pic.png', mimeType: 'image/png', base64: PNG_1X1_BASE64 };
-// "%PDF-1.4" in base64: il contenuto non conta, conta che il MIME non sia image/*.
+// "%PDF-1.4" in base64: the content does not matter, what matters is that the MIME is not image/*.
 const PDF = { name: 'spec.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' };
 
 test.describe('Attachments', () => {
@@ -22,10 +22,10 @@ test.describe('Attachments', () => {
 		page,
 		browserName,
 	}) => {
-		// Gecko costruisce ClipboardEvent ma ne svuota il DataTransfer (files: 0,
-		// types: []), quindi un incolla sintetico con file è verificabile solo su
-		// Chromium. Il resto del percorso è coperto dai test con drag & drop.
-		test.skip(browserName !== 'chromium', 'ClipboardEvent sintetico senza file fuori da Chromium');
+		// Gecko builds the ClipboardEvent but empties its DataTransfer (files: 0,
+		// types: []), so a synthetic paste carrying files can only be checked on
+		// Chromium. The rest of the path is covered by the drag & drop tests.
+		test.skip(browserName !== 'chromium', 'synthetic ClipboardEvent carries no files outside Chromium');
 
 		await gotoEditor(page);
 		await pasteFiles(page, [PNG]);
@@ -53,7 +53,7 @@ test.describe('Attachments', () => {
 		await expect(image).toHaveAttribute('src', /^blob:/);
 		await expect(image).toHaveAttribute('alt', 'pic.png');
 
-		// Il riferimento all'allegato è stato salvato nel file aperto.
+		// The attachment reference has been saved into the open file.
 		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 	});
 
@@ -67,8 +67,8 @@ test.describe('Attachments', () => {
 		await dragFiles(page, [PNG], ['dragenter', 'dragover']);
 		await expect(overlay).toBeVisible();
 
-		// Entrare in un figlio e uscirne non deve far sparire l'overlay: è il
-		// contatore di profondità a tenerlo acceso finché il drag è ancora sopra.
+		// Entering a child and leaving it must not make the overlay disappear: the
+		// depth counter is what keeps it on while the drag is still over.
 		await dragFiles(page, [PNG], ['dragenter', 'dragleave']);
 		await expect(overlay).toBeVisible();
 
@@ -99,13 +99,13 @@ test.describe('Attachments', () => {
 
 		await page.goto('./');
 
-		// Il file viene riaperto e il blob riletto da IndexedDB.
+		// The file is reopened and the blob read back from IndexedDB.
 		await expect(page.locator('#markdown-input')).toHaveValue(/attachment:[0-9a-f-]+/);
 		await expect(page.locator('#preview-pane img')).toHaveAttribute('src', /^blob:/);
 	});
 
-	// I nodi dell'albero non hanno estensione: è l'esportazione ad aggiungere
-	// ".md" al nome del file aperto.
+	// Tree nodes have no extension: it is the export that adds ".md" to the name
+	// of the open file.
 	test('exports a plain .md named after the open file', async ({ page }) => {
 		await gotoEditor(page);
 
@@ -138,7 +138,7 @@ test.describe('Attachments', () => {
 			'welcome.md',
 		]);
 
-		// I riferimenti "attachment:<id>" sono stati riscritti in percorsi relativi.
+		// The "attachment:<id>" references have been rewritten into relative paths.
 		const markdown = strFromU8(entries['welcome.md']);
 		expect(markdown).toContain('![pic.png](attachments/pic.png)');
 		expect(markdown).toContain('[spec.pdf](attachments/spec.pdf)');
@@ -151,8 +151,8 @@ test.describe('Attachments', () => {
 		await waitForRecordCount(page, 'attachments', 1);
 		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
-		// Rimosso il riferimento, il blob non è più raggiungibile: va cancellato.
-		await page.locator('#markdown-input').fill('# Senza allegati');
+		// With the reference removed the blob is no longer reachable: it has to be deleted.
+		await page.locator('#markdown-input').fill('# No attachments');
 		await waitForRecordCount(page, 'attachments', 0);
 		await expect(page.locator('#preview-pane img')).toHaveCount(0);
 	});
@@ -163,7 +163,7 @@ test.describe('Attachments', () => {
 		await waitForRecordCount(page, 'attachments', 2);
 		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
-		await treeContextMenu(page, 'welcome', 'Elimina');
+		await treeContextMenu(page, 'welcome', 'Delete');
 
 		await expect(page.getByTestId('tree-file')).toHaveCount(0);
 		await waitForRecordCount(page, 'attachments', 0);
@@ -175,14 +175,14 @@ test.describe('Attachments', () => {
 		await waitForRecordCount(page, 'attachments', 1);
 		await waitForNodeContent(page, 'welcome', /attachment:[0-9a-f-]+/);
 
-		// Aprire un altro file cambia interamente il testo dell'editor: la
-		// raccolta degli allegati inutilizzati non deve scambiarlo per una
-		// rimozione dei riferimenti del file precedente.
+		// Opening another file replaces the editor text entirely: the unused
+		// attachment collection must not mistake that for a removal of the
+		// previous file's references.
 		await page.getByTestId('tree-root').click();
 		await page.getByRole('button', { name: 'New file' }).click();
 		await page.getByTestId('tree-rename-input').press('Enter');
-		await page.locator('#markdown-input').fill('# Un altro file');
-		await waitForNodeContent(page, 'untitled', /# Un altro file/);
+		await page.locator('#markdown-input').fill('# Another file');
+		await waitForNodeContent(page, 'untitled', /# Another file/);
 
 		expect(await countRecords(page, 'attachments')).toBe(1);
 	});

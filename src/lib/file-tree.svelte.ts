@@ -1,12 +1,12 @@
 /**
- * Stato condiviso dell'albero dei file: la sidebar lo disegna, l'editor lo usa
- * per sapere quale file è aperto. Vive a livello di modulo perché la sidebar è
- * renderizzata da markdown-previewer.svelte, quindi entrambi stanno nella
- * stessa isola Astro e vedono la stessa istanza.
+ * Shared file-tree state: the sidebar renders it, the editor uses it to know
+ * which file is open. It lives at module level because the sidebar is
+ * rendered by markdown-previewer.svelte, so both sit inside the same Astro
+ * island and see the same instance.
  *
- * L'ordinamento dei fratelli è automatico (cartelle prima, poi per nome): il
- * drag & drop sposta un nodo dentro un'altra cartella, non ne cambia la
- * posizione tra i fratelli.
+ * Sibling ordering is automatic (folders first, then by name): drag & drop
+ * moves a node into another folder, it does not change its position among
+ * siblings.
  */
 
 import { SvelteSet } from "svelte/reactivity";
@@ -40,16 +40,16 @@ let dropTargetId = $state<string | null>(null);
 const expanded = new SvelteSet<string>();
 
 /**
- * Il nodo trascinato. Variabile semplice e non stato reattivo: durante il
- * "dragover" `dataTransfer.getData()` ritorna sempre stringa vuota (i dati sono
- * in modalità protetta finché non avviene il drop), quindi la validità dello
- * spostamento va decisa leggendo da qui.
+ * The dragged node. A plain variable and not reactive state: during
+ * "dragover" `dataTransfer.getData()` always returns an empty string (the data
+ * is in protected mode until the drop happens), so whether the move is valid
+ * has to be decided by reading from here.
  */
 let dragId: string | null = null;
 
 /**
- * Callback registrata dall'editor per caricare il contenuto di un file. Con
- * `null` l'editor si svuota: non c'è più nessun file su cui scrivere.
+ * Callback registered by the editor to load a file's content. With `null` the
+ * editor empties itself: there is no file left to write into.
  */
 let onOpenFile: ((node: FileNode | null) => void) | null = null;
 
@@ -66,8 +66,8 @@ function buildTree(list: FileNode[]): TreeNode[] {
 	const roots: TreeNode[] = [];
 	for (const node of byId.values()) {
 		const parent = byId.get(node.parentId);
-		// Un parentId che non esiste più (dato inconsistente) non deve far
-		// sparire il nodo dall'albero: lo si tratta come figlio della radice.
+		// A parentId that no longer exists (inconsistent data) must not make the
+		// node vanish from the tree: treat it as a child of the root instead.
 		if (parent && parent.id !== node.id) parent.children.push(node);
 		else roots.push(node);
 	}
@@ -83,20 +83,20 @@ function findNode(nodeId: string | null): FileNode | undefined {
 	return nodes.find((node) => node.id === nodeId);
 }
 
-/** True se `candidate` è `nodeId` stesso o uno dei suoi discendenti. */
+/** True if `candidate` is `nodeId` itself or one of its descendants. */
 function isSelfOrDescendant(candidate: string, nodeId: string): boolean {
 	let current: string | undefined = candidate;
 	const seen = new Set<string>();
 	while (current && current !== ROOT_ID) {
 		if (current === nodeId) return true;
-		if (seen.has(current)) return false; // ciclo: fermarsi invece di girare a vuoto
+		if (seen.has(current)) return false; // cycle: stop instead of spinning
 		seen.add(current);
 		current = findNode(current)?.parentId;
 	}
 	return false;
 }
 
-/** Nome libero dentro `parentId`, aggiungendo "-2", "-3", … finché non collide. */
+/** A free name inside `parentId`, appending "-2", "-3", … until it stops colliding. */
 function uniqueName(name: string, parentId: string, ignoreId?: string): string {
 	const taken = new Set(
 		nodes
@@ -111,10 +111,9 @@ function uniqueName(name: string, parentId: string, ignoreId?: string): string {
 }
 
 /**
- * Ricarica l'albero e riallinea il set delle cartelle aperte a quanto salvato.
- * Il set resta la sorgente per il rendering, ma il suo contenuto viene dal
- * campo `expanded` dei nodi: è così che l'apertura sopravvive a un ricaricamento
- * della pagina.
+ * Reloads the tree and realigns the set of open folders with what was saved.
+ * The set stays the source for rendering, but its content comes from the
+ * nodes' `expanded` field: that is how the open state survives a page reload.
  */
 async function reload(): Promise<void> {
 	nodes = await listNodes();
@@ -124,16 +123,16 @@ async function reload(): Promise<void> {
 	}
 }
 
-/** Apre o chiude una cartella subito a schermo, salvando in background. */
+/** Opens or closes a folder on screen right away, saving in the background. */
 function persistExpanded(nodeId: string, value: boolean) {
 	if (value) expanded.add(nodeId);
 	else expanded.delete(nodeId);
 	const node = findNode(nodeId);
-	// La copia in memoria va aggiornata anche qui: il prossimo reload()
-	// ricostruisce il set proprio da questo campo.
+	// The in-memory copy has to be updated here too: the next reload()
+	// rebuilds the set from this very field.
 	if (node) node.expanded = value;
 	setNodeExpanded(nodeId, value).catch((err) => {
-		console.error("Impossibile salvare lo stato della cartella:", err);
+		console.error("Could not save folder state:", err);
 	});
 }
 
@@ -171,14 +170,14 @@ export const fileTree = {
 		persistExpanded(nodeId, !expanded.has(nodeId));
 	},
 
-	/** L'editor si registra qui per ricevere il file da aprire. */
+	/** The editor registers here to receive the file to open. */
 	setOpenFileHandler(handler: (node: FileNode | null) => void) {
 		onOpenFile = handler;
 	},
 
 	/**
-	 * Carica l'albero e, la primissima volta che l'app viene aperta, crea il
-	 * file di esempio così che la sidebar non parta vuota.
+	 * Loads the tree and, the very first time the app is opened, creates the
+	 * sample file so the sidebar does not start out empty.
 	 */
 	async init(): Promise<void> {
 		await reload();
@@ -199,7 +198,7 @@ export const fileTree = {
 		selectedId = nodeId;
 	},
 
-	/** Seleziona un file e ne chiede l'apertura all'editor. */
+	/** Selects a file and asks the editor to open it. */
 	open(nodeId: string) {
 		const node = findNode(nodeId);
 		if (!node || node.type !== "file") return;
@@ -209,8 +208,8 @@ export const fileTree = {
 	},
 
 	/**
-	 * Dove finisce un nuovo nodo: dentro la cartella selezionata, accanto al
-	 * file selezionato, altrimenti nella radice.
+	 * Where a new node ends up: inside the selected folder, next to the
+	 * selected file, otherwise in the root.
 	 */
 	targetParentId(referenceId: string | null = selectedId): string {
 		const reference = findNode(referenceId);
@@ -218,13 +217,13 @@ export const fileTree = {
 		return reference.type === "folder" ? reference.id : reference.parentId;
 	},
 
-	/** Crea un file o una cartella ed entra subito in modalità rinomina. */
+	/** Creates a file or a folder and enters rename mode straight away. */
 	async create(type: NodeType, referenceId: string | null = selectedId): Promise<void> {
 		const parentId = this.targetParentId(referenceId);
 		const name = uniqueName(type === "folder" ? "new folder" : "untitled", parentId);
 		const created = await createNode({ type, name, parentId });
-		// Prima di reload(), che ricostruisce il set dai nodi: così l'apertura
-		// automatica della cartella che accoglie il nuovo nodo non viene persa.
+		// Before reload(), which rebuilds the set from the nodes: this way the
+		// automatic opening of the folder receiving the new node is not lost.
 		if (parentId !== ROOT_ID) await setNodeExpanded(parentId, true);
 		await reload();
 		selectedId = created.id;
@@ -240,7 +239,7 @@ export const fileTree = {
 		renamingId = null;
 	},
 
-	/** Conferma la rinomina. Un nome vuoto o invariato viene semplicemente ignorato. */
+	/** Confirms the rename. An empty or unchanged name is simply ignored. */
 	async rename(nodeId: string, rawName: string): Promise<void> {
 		renamingId = null;
 		const node = findNode(nodeId);
@@ -250,15 +249,15 @@ export const fileTree = {
 		await reload();
 	},
 
-	/** True se `nodeId` può essere spostato dentro `parentId`. */
+	/** True if `nodeId` can be moved inside `parentId`. */
 	canMove(nodeId: string | null, parentId: string): boolean {
 		const node = findNode(nodeId);
 		if (!node || node.parentId === parentId) return false;
 		if (parentId === ROOT_ID) return true;
 		const parent = findNode(parentId);
 		if (!parent || parent.type !== "folder") return false;
-		// Spostare una cartella dentro se stessa o in un suo discendente
-		// staccherebbe quel ramo dall'albero.
+		// Moving a folder inside itself or into one of its descendants would
+		// detach that branch from the tree.
 		return !isSelfOrDescendant(parentId, node.id);
 	},
 
@@ -272,12 +271,12 @@ export const fileTree = {
 		await reload();
 	},
 
-	/** Elimina un nodo con tutto il suo contenuto. Ritorna false se annullato. */
+	/** Deletes a node with everything inside it. Returns false if cancelled. */
 	async remove(nodeId: string): Promise<boolean> {
 		const node = findNode(nodeId);
 		if (!node) return false;
 		const hasChildren = nodes.some((other) => other.parentId === nodeId);
-		if (hasChildren && !window.confirm(`Eliminare "${node.name}" e tutto il suo contenuto?`)) {
+		if (hasChildren && !window.confirm(`Delete "${node.name}" and all its contents?`)) {
 			return false;
 		}
 
@@ -285,9 +284,9 @@ export const fileTree = {
 			nodes.filter((other) => isSelfOrDescendant(other.id, nodeId)).map((other) => other.id),
 		);
 		const closingActiveFile = activeFileId !== null && removedIds.has(activeFileId);
-		// L'editor va staccato *prima* della cancellazione: così l'eventuale
-		// modifica ancora in attesa del debounce finisce nel file mentre esiste
-		// ancora, invece di fallire (o peggio, di ricrearlo) subito dopo.
+		// The editor has to be detached *before* the deletion: that way an edit
+		// still waiting on the debounce lands in the file while it still
+		// exists, instead of failing (or worse, recreating it) right after.
 		if (closingActiveFile) {
 			activeFileId = null;
 			onOpenFile?.(null);
@@ -317,7 +316,7 @@ export const fileTree = {
 		dropTargetId = parentId;
 	},
 
-	/** Conclude un drag & drop sull'elemento indicato. */
+	/** Ends a drag & drop on the given element. */
 	async drop(parentId: string): Promise<void> {
 		const nodeId = dragId;
 		this.endDrag();
@@ -325,9 +324,9 @@ export const fileTree = {
 	},
 
 	/**
-	 * Allinea la copia in memoria dopo che l'editor ha salvato. Senza questo la
-	 * cache resterebbe al contenuto letto all'avvio, e riaprire lo stesso file
-	 * dopo averlo lasciato riporterebbe indietro il testo.
+	 * Realigns the in-memory copy after the editor has saved. Without this the
+	 * cache would stay at the content read at startup, and reopening the same
+	 * file after leaving it would bring the old text back.
 	 */
 	syncContent(nodeId: string, content: string) {
 		const node = findNode(nodeId);

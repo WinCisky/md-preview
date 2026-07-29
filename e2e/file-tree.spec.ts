@@ -29,13 +29,13 @@ test.describe('File tree', () => {
 	test('the header buttons create a file and a folder in the root', async ({ page }) => {
 		await gotoEditor(page);
 
-		// Il nodo appena creato entra subito in rinomina: confermare senza
-		// modificare il nome lo lascia con quello di default.
+		// The just-created node enters rename mode straight away: confirming
+		// without changing the name leaves it with the default one.
 		await page.getByRole('button', { name: 'New folder' }).click();
 		await confirmTreeName(page, 'new folder');
 		await expect(page.getByTestId('tree-folder')).toHaveCount(1);
 
-		// Con l'area vuota selezionata il nuovo file finisce nella radice.
+		// With the empty area selected the new file ends up in the root.
 		await page.getByTestId('tree-root').click();
 		await createTreeNode(page, 'file', 'notes');
 
@@ -57,7 +57,7 @@ test.describe('File tree', () => {
 		await gotoEditor(page);
 		await createTreeNode(page, 'folder', 'drafts');
 		await createTreeNodeFrom(page, 'drafts', 'file', 'draft');
-		// Dal file dentro la cartella: il nuovo nodo è un fratello, non un figlio.
+		// From the file inside the folder: the new node is a sibling, not a child.
 		await createTreeNodeFrom(page, 'draft', 'file', 'other');
 
 		const nodes = await readNodes(page);
@@ -68,7 +68,7 @@ test.describe('File tree', () => {
 	test('renames a file from the context menu and keeps it open', async ({ page }) => {
 		await gotoEditor(page);
 
-		await treeContextMenu(page, 'welcome', 'Rinomina');
+		await treeContextMenu(page, 'welcome', 'Rename');
 		await confirmTreeName(page, 'readme');
 
 		await expect(page.getByTestId('active-file-name')).toHaveText('readme');
@@ -77,7 +77,7 @@ test.describe('File tree', () => {
 	test('escape cancels a rename', async ({ page }) => {
 		await gotoEditor(page);
 
-		await treeContextMenu(page, 'welcome', 'Rinomina');
+		await treeContextMenu(page, 'welcome', 'Rename');
 		await page.getByTestId('tree-rename-input').fill('nope');
 		await page.getByTestId('tree-rename-input').press('Escape');
 
@@ -92,13 +92,13 @@ test.describe('File tree', () => {
 		expect(await readNodes(page)).toHaveLength(3);
 
 		page.once('dialog', (dialog) => dialog.accept());
-		await treeContextMenu(page, 'drafts', 'Elimina');
+		await treeContextMenu(page, 'drafts', 'Delete');
 
 		await expect(page.getByTestId('tree-folder')).toHaveCount(0);
 		await expect(async () => {
 			expect(await readNodes(page)).toHaveLength(1);
 		}).toPass();
-		// Cancellato il file aperto, l'editor ripiega su quello rimasto.
+		// With the open file deleted, the editor falls back to the remaining one.
 		await expect(page.getByTestId('active-file-name')).toHaveText('welcome');
 	});
 
@@ -113,7 +113,7 @@ test.describe('File tree', () => {
 			expect(nodes.find((node) => node.name === 'welcome')!.parentId).toBe(folder.id);
 		}).toPass();
 
-		// La cartella si apre da sola sul drop, quindi la riga è di nuovo visibile.
+		// The folder opens by itself on drop, so the row is visible again.
 		await expect(page.locator('[data-name="welcome"]')).toBeVisible();
 		expect(await dragTreeNode(page, 'welcome', null)).toBe(true);
 		await expect(async () => {
@@ -144,8 +144,8 @@ test.describe('File tree', () => {
 		await expect(input).toHaveValue('');
 		await input.fill('# Notes');
 
-		// Il cambio di file avviene prima che il debounce scada: la modifica in
-		// sospeso deve finire comunque in notes.
+		// The file switch happens before the debounce expires: the pending edit
+		// must still end up in notes.
 		await page.locator('[data-name="welcome"]').click();
 		await expect(input).toHaveValue(/Hello Markdown/);
 		await waitForNodeContent(page, 'notes', /# Notes/);
@@ -157,7 +157,7 @@ test.describe('File tree', () => {
 	test('restores which folders were open after a reload', async ({ page }) => {
 		await gotoEditor(page);
 		await createTreeNode(page, 'folder', 'drafts');
-		// Creare un figlio apre la cartella che lo accoglie.
+		// Creating a child opens the folder receiving it.
 		await createTreeNodeFrom(page, 'drafts', 'file', 'draft');
 
 		await page.goto('./');
@@ -180,13 +180,13 @@ test.describe('File tree', () => {
 		await createTreeNode(page, 'folder', 'drafts');
 		await createTreeNodeFrom(page, 'drafts', 'file', 'draft');
 
-		// Il drop su un file viene dirottato sulla cartella che lo contiene, ma a
-		// illuminarsi deve essere solo quella cartella.
+		// A drop on a file is redirected to the folder containing it, but only
+		// that folder must light up.
 		await hoverTreeNode(page, 'welcome', 'draft');
 
 		await expect(page.locator('[data-name="drafts"]')).toHaveAttribute('data-drop-target', '');
 		await expect(page.locator('[data-testid="tree-file"][data-drop-target]')).toHaveCount(0);
-		// L'evidenziazione è davvero disegnata, non solo un attributo.
+		// The highlight is actually painted, not just an attribute.
 		const border = await page
 			.locator('[data-name="drafts"]')
 			.evaluate((el) => getComputedStyle(el).borderTopColor);
@@ -212,9 +212,9 @@ test.describe('File tree', () => {
 	test.describe('small screens', () => {
 		test.use({ viewport: { width: 360, height: 640 } });
 
-		// Su mobile la sidebar è un pannello a scomparsa che copre l'editor: resta
-		// chiuso al caricamento qualunque cosa dica il cookie, e da chiuso non è
-		// nemmeno montato.
+		// On mobile the sidebar is a slide-out panel that covers the editor: it
+		// stays closed on load whatever the cookie says, and while closed it is
+		// not even mounted.
 		test('ignores the stored sidebar state', async ({ page, context }) => {
 			for (const value of ['false', 'true']) {
 				await context.addCookies([
@@ -225,8 +225,8 @@ test.describe('File tree', () => {
 				await expect(page.getByTestId('tree-file')).toHaveCount(0);
 			}
 
-			// Aprendolo a mano il pannello compare, quindi l'assenza qui sopra è
-			// davvero il pannello chiuso e non un albero che non si carica.
+			// Opening it by hand makes the panel appear, so the absence above is
+			// really the closed panel and not a tree that fails to load.
 			await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
 			await expect(page.getByTestId('tree-file')).toHaveCount(1);
 		});

@@ -1,39 +1,40 @@
 /**
- * Helper per gli allegati (immagini e file generici) inseriti nell'editor.
+ * Helpers for the attachments (images and generic files) inserted in the
+ * editor.
  *
- * Nel testo markdown un allegato è sempre e solo un riferimento della forma
- * `attachment:<uuid>`: i byte vivono in IndexedDB (vedi files-db.ts). Questo
- * mantiene compatto il contenuto salvato: incorporare i file in base64
- * significherebbe riscriverli ad ogni salvataggio del testo.
+ * In the markdown text an attachment is always and only a reference of the
+ * form `attachment:<uuid>`: the bytes live in IndexedDB (see files-db.ts).
+ * This keeps the saved content compact: embedding the files as base64 would
+ * mean rewriting them on every save of the text.
  *
- * Il riferimento viene risolto in due momenti diversi:
- * - a schermo, sostituendolo con un object URL prima della sanitizzazione;
- * - in esportazione, sostituendolo con un percorso relativo dentro uno zip.
+ * The reference is resolved at two different moments:
+ * - on screen, replacing it with an object URL before sanitization;
+ * - on export, replacing it with a relative path inside a zip.
  */
 
 import { zipSync, strToU8 } from "fflate";
 import type { AttachmentRecord } from "$lib/files-db";
 
-/** Oltre questa soglia il file non viene allegato (IndexedDB è per-origine). */
+/** Past this threshold the file is not attached (IndexedDB is per-origin). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
-/** Un allegato già caricato e pronto per essere mostrato nell'anteprima. */
+/** An attachment already loaded and ready to be shown in the preview. */
 export interface ResolvedAttachment {
 	url: string;
 	name: string;
 }
 
-/** `attachment:<uuid>` ovunque compaia (sorgente markdown o HTML generato). */
+/** `attachment:<uuid>` wherever it appears (markdown source or generated HTML). */
 const ATTACHMENT_REF = /attachment:([0-9a-fA-F][0-9a-fA-F-]*)/g;
 
-/** Lo stesso riferimento ma nella posizione di un attributo dell'HTML di marked. */
+/** The same reference but in the position of an attribute in marked's HTML. */
 const ATTACHMENT_ATTR = /(src|href)="attachment:([0-9a-fA-F][0-9a-fA-F-]*)"/g;
 
 /**
- * DOMPurify di default non ammette lo schema `blob:` (non è nella sua
- * ALLOWED_URI_REGEXP), quindi gli object URL degli allegati verrebbero
- * rimossi dall'HTML sanitizzato. Qui si riprende la regexp predefinita
- * aggiungendo `blob` alla lista degli schemi consentiti.
+ * By default DOMPurify does not allow the `blob:` scheme (it is not in its
+ * ALLOWED_URI_REGEXP), so the attachments' object URLs would be stripped from
+ * the sanitized HTML. Here the default regexp is taken back with `blob` added
+ * to the list of allowed schemes.
  */
 export const SANITIZE_CONFIG = {
 	ALLOWED_URI_REGEXP:
@@ -45,7 +46,7 @@ export function isImageAttachment(mimeType: string): boolean {
 	return mimeType.startsWith("image/");
 }
 
-/** Gli id di tutti gli allegati referenziati da un testo, senza duplicati. */
+/** The ids of every attachment referenced by a text, without duplicates. */
 export function extractAttachmentIds(text: string): string[] {
 	const ids = new Set<string>();
 	for (const match of text.matchAll(ATTACHMENT_REF)) {
@@ -54,7 +55,7 @@ export function extractAttachmentIds(text: string): string[] {
 	return [...ids];
 }
 
-/** Lo snippet markdown da inserire nell'editor per un allegato appena salvato. */
+/** The markdown snippet to insert in the editor for a just-saved attachment. */
 export function attachmentMarkdown(attachment: AttachmentRecord): string {
 	const label = attachment.name.replace(/[[\]]/g, "");
 	const link = `[${label}](attachment:${attachment.id})`;
@@ -62,10 +63,11 @@ export function attachmentMarkdown(attachment: AttachmentRecord): string {
 }
 
 /**
- * Sostituisce i riferimenti `attachment:<id>` con gli object URL già caricati.
- * Va eseguito prima di DOMPurify, così il sanitizer vede un URL normale.
- * I riferimenti non ancora risolti restano invariati e vengono scartati dalla
- * sanitizzazione: è lo stato transitorio mentre il blob viene letto da IndexedDB.
+ * Replaces the `attachment:<id>` references with the object URLs already
+ * loaded. It has to run before DOMPurify, so the sanitizer sees a normal URL.
+ * References not yet resolved are left unchanged and get dropped by the
+ * sanitization: that is the transient state while the blob is read from
+ * IndexedDB.
  */
 export function resolveAttachmentUrls(
 	html: string,
@@ -74,8 +76,8 @@ export function resolveAttachmentUrls(
 	return html.replace(ATTACHMENT_ATTR, (match, attribute: string, id: string) => {
 		const attachment = resolved[id];
 		if (!attachment) return match;
-		// download: cliccando un allegato non-immagine il browser salva il file
-		// con il suo nome originale invece di aprire un blob senza estensione.
+		// download: clicking a non-image attachment makes the browser save the
+		// file under its original name instead of opening an extension-less blob.
 		const download =
 			attribute === "href" ? ` download="${attachment.name.replace(/"/g, "&quot;")}"` : "";
 		return `${attribute}="${attachment.url}"${download}`;
@@ -95,7 +97,7 @@ export function formatBytes(size: number): string {
 	return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unitIndex]}`;
 }
 
-/** Nome file sicuro per lo zip: niente separatori di percorso né caratteri di controllo. */
+/** A zip-safe file name: no path separators and no control characters. */
 function safeFileName(name: string, fallback: string): string {
 	const cleaned = [...name.replace(/[/\\]/g, "-")]
 		.filter((char) => char.codePointAt(0)! > 31 && !'<>:"|?*'.includes(char))
@@ -105,11 +107,11 @@ function safeFileName(name: string, fallback: string): string {
 }
 
 /**
- * Costruisce lo zip esportabile di un documento: il markdown (sotto il nome
- * `markdownName`) con i riferimenti riscritti in percorsi relativi, più la
- * cartella `attachments/` con i file veri e propri. Compressione disattivata
- * (`level: 0`): immagini e PDF sono già compressi, ricomprimerli costerebbe
- * tempo senza guadagno.
+ * Builds the exportable zip of a document: the markdown (under the name
+ * `markdownName`) with the references rewritten into relative paths, plus the
+ * `attachments/` folder with the actual files. Compression is off
+ * (`level: 0`): images and PDFs are already compressed, recompressing them
+ * would cost time for no gain.
  */
 export async function buildExportZip(
 	markdown: string,
@@ -136,11 +138,11 @@ export async function buildExportZip(
 
 	const rewritten = markdown.replace(ATTACHMENT_REF, (match, id: string) => {
 		const path = pathById.get(id);
-		// encodeURI e non encodeURIComponent: lo "/" della cartella va preservato.
+		// encodeURI and not encodeURIComponent: the folder's "/" must be preserved.
 		return path ? encodeURI(path) : match;
 	});
-	// Il nome arriva da quello scelto dall'utente nell'albero: senza ripulirlo
-	// uno "/" creerebbe una cartella dentro lo zip.
+	// The name comes from the one the user chose in the tree: without cleaning
+	// it a "/" would create a folder inside the zip.
 	files[safeFileName(markdownName, "document.md")] = strToU8(rewritten);
 
 	return new Blob([zipSync(files, { level: 0 })], { type: "application/zip" });

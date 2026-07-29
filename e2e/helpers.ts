@@ -2,14 +2,14 @@ import { expect, type Page } from '@playwright/test';
 
 export type StoreName = 'nodes' | 'attachments';
 
-/** PNG 1x1 trasparente: abbastanza per verificare che l'anteprima lo renderizzi. */
+/** A transparent 1x1 PNG: enough to check that the preview renders it. */
 export const PNG_1X1_BASE64 =
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 export interface SeedFile {
 	name: string;
 	mimeType: string;
-	/** Contenuto in base64; per le immagini basta un PNG 1x1. */
+	/** Content in base64; for images a 1x1 PNG is enough. */
 	base64: string;
 }
 
@@ -23,15 +23,15 @@ export interface NodeRecord {
 }
 
 /**
- * Apre il database dei file dal contesto della pagina, replicando lo schema di
- * src/lib/files-db.ts. Va tenuto allineato a quello dell'app: qualunque delle
- * due richieste (test o app) vinca la corsa ad aprire per prima il database gli
- * object store devono venire creati correttamente — e soprattutto con la stessa
- * versione, altrimenti l'apertura con la versione più bassa fallisce con un
- * VersionError.
+ * Opens the files database from the page context, replicating the schema of
+ * src/lib/files-db.ts. It has to be kept aligned with the app's: whichever of
+ * the two requests (test or app) wins the race to open the database first, the
+ * object stores must be created correctly — and above all with the same
+ * version, otherwise opening with the lower version fails with a VersionError.
  *
- * Definita come stringa e valutata nel browser perché serve identica dentro più
- * `page.evaluate`, che non possono catturare funzioni dal contesto Node.
+ * Defined as a string and evaluated in the browser because it is needed
+ * identically inside several `page.evaluate` calls, which cannot capture
+ * functions from the Node context.
  */
 function openFilesDb(): Promise<IDBDatabase> {
 	return new Promise((resolve, reject) => {
@@ -52,7 +52,7 @@ function openFilesDb(): Promise<IDBDatabase> {
 	});
 }
 
-/** Ricostruisce un File a partire dal suo contenuto base64, lato browser. */
+/** Rebuilds a File from its base64 content, on the browser side. */
 function toFile(file: SeedFile): File {
 	const binary = atob(file.base64);
 	const bytes = new Uint8Array(binary.length);
@@ -60,13 +60,13 @@ function toFile(file: SeedFile): File {
 	return new File([bytes], file.name, { type: file.mimeType });
 }
 
-/** Sorgente delle due funzioni qui sopra, iniettata in ogni page.evaluate. */
+/** Source of the two functions above, injected into every page.evaluate. */
 const BROWSER_HELPERS = `${openFilesDb};\n${toFile};`;
 
 /**
- * Esegue nel browser una funzione che può usare `openFilesDb()` e `toFile()`.
- * Playwright serializza il corpo della callback, quindi gli helper vanno
- * spediti come sorgente e reinstallati sul posto.
+ * Runs in the browser a function that can use `openFilesDb()` and `toFile()`.
+ * Playwright serializes the callback body, so the helpers have to be shipped as
+ * source and reinstalled on the spot.
  */
 function evaluateWithHelpers<Arg, Result>(
 	page: Page,
@@ -85,11 +85,10 @@ function evaluateWithHelpers<Arg, Result>(
 }
 
 /**
- * Conta i record presenti in uno degli object store, leggendo direttamente dal
- * browser. Usato con `expect(...).toPass()` per attendere in modo
- * deterministico che il salvataggio debounced dell'editor (SAVE_DEBOUNCE_MS in
- * markdown-previewer.svelte) sia stato effettivamente scritto, invece di
- * affidarsi a un'attesa fissa.
+ * Counts the records present in one of the object stores, reading directly from
+ * the browser. Used with `expect(...).toPass()` to wait deterministically for
+ * the editor's debounced save (SAVE_DEBOUNCE_MS in markdown-previewer.svelte)
+ * to have actually been written, instead of relying on a fixed wait.
  */
 export function countRecords(page: Page, storeName: StoreName): Promise<number> {
 	return evaluateWithHelpers(
@@ -118,7 +117,7 @@ export async function waitForRecordCount(page: Page, storeName: StoreName, expec
 	}).toPass({ timeout: 10000 });
 }
 
-/** Tutti i nodi dell'albero come sono scritti su IndexedDB. */
+/** Every node in the tree as it is written to IndexedDB. */
 export function readNodes(page: Page): Promise<NodeRecord[]> {
 	return evaluateWithHelpers(
 		page,
@@ -136,7 +135,7 @@ export function readNodes(page: Page): Promise<NodeRecord[]> {
 	);
 }
 
-/** Attende che il file indicato sia stato salvato con un contenuto atteso. */
+/** Waits for the given file to have been saved with the expected content. */
 export async function waitForNodeContent(page: Page, name: string, expected: RegExp) {
 	await expect(async () => {
 		const nodes = await readNodes(page);
@@ -146,8 +145,8 @@ export async function waitForNodeContent(page: Page, name: string, expected: Reg
 }
 
 /**
- * Apre l'editor e attende che l'isola Svelte sia idratata. Alla prima apertura
- * l'app crea il file di esempio, il cui contenuto è quello atteso qui.
+ * Opens the editor and waits for the Svelte island to be hydrated. On the first
+ * open the app creates the sample file, whose content is the one expected here.
  */
 export async function gotoEditor(page: Page) {
 	await page.goto('./');
@@ -156,16 +155,15 @@ export async function gotoEditor(page: Page) {
 }
 
 /**
- * Attende la prima schermata utile: l'anteprima è vuota nell'HTML servito (la
- * sanitizzazione avviene solo lato client), quindi finché il titolo non compare
- * gli handler di paste/drop non sono ancora agganciati e un evento sintetico
- * andrebbe perso.
+ * Waits for the first usable screen: the preview is empty in the served HTML
+ * (sanitization happens on the client only), so until the heading appears the
+ * paste/drop handlers are not attached yet and a synthetic event would be lost.
  */
 export async function waitForHydration(page: Page) {
 	await expect(page.getByRole('heading', { name: 'Hello Markdown', level: 1 })).toBeVisible();
 }
 
-/** Incolla dei file nella textarea, come farebbe Ctrl+V su uno screenshot. */
+/** Pastes files into the textarea, as Ctrl+V on a screenshot would. */
 export async function pasteFiles(page: Page, files: SeedFile[]) {
 	await evaluateWithHelpers(
 		page,
@@ -186,7 +184,7 @@ export async function pasteFiles(page: Page, files: SeedFile[]) {
 	);
 }
 
-/** Invia una sequenza di eventi di drag con dei file sulla drop zone dell'editor. */
+/** Sends a sequence of drag events carrying files onto the editor's drop zone. */
 export async function dragFiles(page: Page, files: SeedFile[], types: string[]) {
 	await evaluateWithHelpers(
 		page,
@@ -202,16 +200,16 @@ export async function dragFiles(page: Page, files: SeedFile[], types: string[]) 
 	);
 }
 
-/** Rilascia dei file sulla drop zone dell'editor. */
+/** Drops files onto the editor's drop zone. */
 export async function dropFiles(page: Page, files: SeedFile[]) {
 	await dragFiles(page, files, ['dragenter', 'dragover', 'drop']);
 }
 
 /**
- * Trascina una riga dell'albero su un'altra (o sull'area radice con
- * `targetName` null). Gli eventi sono sintetici: il drag & drop nativo non è
- * pilotabile in modo affidabile da Playwright. Ritorna true se il dragover è
- * stato accettato, cioè se l'app considera lo spostamento legale.
+ * Drags a tree row onto another (or onto the root area with `targetName` null).
+ * The events are synthetic: native drag & drop cannot be driven reliably from
+ * Playwright. Returns true if the dragover was accepted, that is, if the app
+ * considers the move legal.
  */
 export function dragTreeNode(
 	page: Page,
@@ -241,8 +239,8 @@ export function dragTreeNode(
 }
 
 /**
- * Trascina una riga sopra un'altra e ci resta: niente drop, niente dragend, così
- * l'evidenziazione della destinazione rimane a schermo e può essere verificata.
+ * Drags a row over another and stays there: no drop, no dragend, so the target
+ * highlight stays on screen and can be asserted.
  */
 export async function hoverTreeNode(page: Page, sourceName: string, targetName: string) {
 	await page.evaluate(
@@ -261,7 +259,7 @@ export async function hoverTreeNode(page: Page, sourceName: string, targetName: 
 	);
 }
 
-/** Apre il menu contestuale su una riga dell'albero e sceglie una voce. */
+/** Opens the context menu on a tree row and picks an entry. */
 export async function treeContextMenu(page: Page, nodeName: string | null, item: string) {
 	const target = nodeName
 		? page.locator(`[data-name="${nodeName}"]`)
@@ -271,10 +269,10 @@ export async function treeContextMenu(page: Page, nodeName: string | null, item:
 }
 
 /**
- * Conferma il nome del nodo appena creato (che nasce già in rinomina) e attende
- * che la riga rinominata compaia: la scrittura su IndexedDB e il conseguente
- * ricaricamento dell'albero sono asincroni, quindi subito dopo Enter la riga
- * porta ancora il nome provvisorio.
+ * Confirms the name of the just-created node (which is born already in rename
+ * mode) and waits for the renamed row to appear: the write to IndexedDB and the
+ * resulting tree reload are async, so right after Enter the row still carries
+ * the provisional name.
  */
 export async function confirmTreeName(page: Page, name: string) {
 	const input = page.getByTestId('tree-rename-input');
@@ -283,19 +281,19 @@ export async function confirmTreeName(page: Page, name: string) {
 	await expect(page.locator(`[data-name="${name}"]`)).toBeVisible();
 }
 
-/** Crea un nodo dai pulsanti in cima alla sidebar e ne conferma il nome. */
+/** Creates a node from the buttons at the top of the sidebar and confirms its name. */
 export async function createTreeNode(page: Page, kind: 'file' | 'folder', name: string) {
 	await page.getByRole('button', { name: kind === 'file' ? 'New file' : 'New folder' }).click();
 	await confirmTreeName(page, name);
 }
 
-/** Crea un nodo dal menu contestuale di un'altra riga e ne conferma il nome. */
+/** Creates a node from another row's context menu and confirms its name. */
 export async function createTreeNodeFrom(
 	page: Page,
 	reference: string | null,
 	kind: 'file' | 'folder',
 	name: string
 ) {
-	await treeContextMenu(page, reference, kind === 'file' ? 'Nuovo file' : 'Nuova cartella');
+	await treeContextMenu(page, reference, kind === 'file' ? 'New file' : 'New folder');
 	await confirmTreeName(page, name);
 }

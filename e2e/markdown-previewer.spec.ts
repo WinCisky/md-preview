@@ -47,14 +47,14 @@ test.describe('Markdown Previewer', () => {
 			const paneGroup = page.locator('[data-slot="resizable-pane-group"]');
 			await expect(paneGroup).toHaveAttribute('data-direction', 'vertical');
 
-			// Nessun overflow orizzontale della pagina.
+			// No horizontal overflow of the page.
 			const { scrollWidth, clientWidth } = await page.evaluate(() => ({
 				scrollWidth: document.documentElement.scrollWidth,
 				clientWidth: document.documentElement.clientWidth,
 			}));
 			expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 
-			// I pulsanti restano tutti dentro il viewport.
+			// All the buttons stay inside the viewport.
 			const buttons = [
 				page.getByRole('button', { name: 'Download Markdown' }),
 				page.getByRole('button', { name: 'Download PDF' }),
@@ -73,6 +73,45 @@ test.describe('Markdown Previewer', () => {
 		// actually overflow and become scrollable.
 		const longMarkdown = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n\n');
 
+		// `scrollBy` fires a genuine `scroll` event, unlike assigning `scrollTop`
+		// and dispatching a synthetic one -- so these tests fail if the element
+		// has stopped being a real scroll container.
+		const scrollToBottom = (el: HTMLElement) => el.scrollBy(0, el.scrollHeight);
+
+		test('the document itself does not scroll', async ({ page }) => {
+			await page.goto('./');
+
+			const input = page.locator('#markdown-input');
+			const preview = page.locator('#preview-pane');
+			await input.fill(longMarkdown);
+			await expect(preview).toContainText('Line 200');
+
+			// The layout is capped at the viewport height: overflow belongs to the
+			// two panes, never to the page. A document scrollbar means an ancestor
+			// lost its height cap, which silently kills scroll sync.
+			const documentOverflows = await page.evaluate(
+				() =>
+					document.documentElement.scrollHeight > document.documentElement.clientHeight + 1 ||
+					document.body.scrollHeight > document.body.clientHeight + 1
+			);
+			expect(documentOverflows).toBe(false);
+		});
+
+		test('both panes are real scroll containers', async ({ page }) => {
+			await page.goto('./');
+
+			const input = page.locator('#markdown-input');
+			const preview = page.locator('#preview-pane');
+			await input.fill(longMarkdown);
+			await expect(preview).toContainText('Line 200');
+
+			await expect(async () => {
+				const overflows = (el: Element) => el.scrollHeight > el.clientHeight;
+				expect(await input.evaluate(overflows)).toBe(true);
+				expect(await preview.evaluate(overflows)).toBe(true);
+			}).toPass();
+		});
+
 		test('scrolling the input to the bottom scrolls the preview to the bottom', async ({ page }) => {
 			await page.goto('./');
 
@@ -85,10 +124,10 @@ test.describe('Markdown Previewer', () => {
 			await expect(preview).toContainText('Line 200');
 
 			await expect(async () => {
-				await input.evaluate((el: HTMLTextAreaElement) => {
-					el.scrollTop = el.scrollHeight;
-					el.dispatchEvent(new Event('scroll'));
-				});
+				await input.evaluate(scrollToBottom);
+				// Guard against a vacuous pass: if neither pane scrolls, both
+				// scrollTops stay 0 and the "at bottom" check trivially holds.
+				expect(await input.evaluate((el: HTMLTextAreaElement) => el.scrollTop)).toBeGreaterThan(0);
 				const atBottom = await preview.evaluate(
 					(el) => Math.abs(el.scrollTop - (el.scrollHeight - el.clientHeight)) < 2
 				);
@@ -105,10 +144,8 @@ test.describe('Markdown Previewer', () => {
 			await expect(preview).toContainText('Line 200');
 
 			await expect(async () => {
-				await preview.evaluate((el: HTMLDivElement) => {
-					el.scrollTop = el.scrollHeight;
-					el.dispatchEvent(new Event('scroll'));
-				});
+				await preview.evaluate(scrollToBottom);
+				expect(await preview.evaluate((el: HTMLDivElement) => el.scrollTop)).toBeGreaterThan(0);
 				const atBottom = await input.evaluate(
 					(el: HTMLTextAreaElement) => Math.abs(el.scrollTop - (el.scrollHeight - el.clientHeight)) < 2
 				);

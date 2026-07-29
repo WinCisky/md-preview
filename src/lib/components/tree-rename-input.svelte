@@ -1,9 +1,9 @@
 <script lang="ts">
 	/**
-	 * Campo di rinomina inline che prende il posto della riga dell'albero.
-	 * Enter conferma, Escape annulla, il blur conferma. `settled` evita che il
-	 * blur emesso dallo smontaggio del campo riapra la strada a un secondo
-	 * salvataggio dopo Enter o Escape.
+	 * Inline rename field that takes the place of the tree row. Enter confirms,
+	 * Escape cancels, blur confirms. `settled` prevents the blur emitted when
+	 * the field unmounts from opening the door to a second save after Enter or
+	 * Escape.
 	 */
 	import { fileTree, type TreeNode } from "$lib/file-tree.svelte";
 

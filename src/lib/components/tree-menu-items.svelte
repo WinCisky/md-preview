@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Voci del menu contestuale dell'albero. Con `node` null il menu è quello
-	 * dell'area vuota della sidebar: si può solo creare, e nella radice.
+	 * Context-menu entries for the tree. With `node` null this is the menu for
+	 * the empty area of the sidebar: you can only create, and only in the root.
 	 */
 	import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
 	import FilePlusIcon from "@lucide/svelte/icons/file-plus";
@@ -18,21 +18,21 @@
 <ContextMenu.Content class="w-48">
 	<ContextMenu.Item onSelect={() => fileTree.create("file", referenceId)}>
 		<FilePlusIcon />
-		Nuovo file
+		New file
 	</ContextMenu.Item>
 	<ContextMenu.Item onSelect={() => fileTree.create("folder", referenceId)}>
 		<FolderPlusIcon />
-		Nuova cartella
+		New folder
 	</ContextMenu.Item>
 	{#if node}
 		<ContextMenu.Separator />
 		<ContextMenu.Item onSelect={() => fileTree.startRename(node.id)}>
 			<PencilIcon />
-			Rinomina
+			Rename
 		</ContextMenu.Item>
 		<ContextMenu.Item variant="destructive" onSelect={() => fileTree.remove(node.id)}>
 			<Trash2Icon />
-			Elimina
+			Delete
 		</ContextMenu.Item>
 	{/if}
 </ContextMenu.Content>

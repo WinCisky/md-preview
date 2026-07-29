@@ -10,12 +10,12 @@
 	let { node }: { node: TreeNode } = $props();
 
 	const renaming = $derived(fileTree.renamingId === node.id);
-	// Un file non è una destinazione: il drop viene dirottato sulla cartella che
-	// lo contiene, così rilasciare sopra una riga qualsiasi fa la cosa attesa.
-	// L'evidenziazione però resta alla sola cartella di destinazione: accenderla
-	// anche qui illuminerebbe tutti i file che stanno dentro quella cartella. Il
-	// bordo trasparente serve solo a tenere le righe allineate a quelle delle
-	// cartelle, che quel bordo lo mostrano quando ricevono un drop.
+	// A file is not a target: the drop is redirected to the folder containing
+	// it, so releasing over any row does the expected thing. The highlight
+	// however stays on the destination folder alone: lighting it up here too
+	// would light up every file inside that folder. The transparent border is
+	// only there to keep these rows aligned with the folder rows, which do show
+	// that border when they receive a drop.
 	const dropParentId = $derived(node.parentId);
 
 	function handleDragStart(event: DragEvent) {
