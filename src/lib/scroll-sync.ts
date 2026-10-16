@@ -17,6 +17,12 @@ export interface AnchorMap {
 	editor: number[];
 	/** Matching y offsets in the preview. */
 	preview: number[];
+	/**
+	 * Top of every source line in the editor (content coordinates, padding
+	 * included), soft wraps accounted for. Lets the word highlight measure a
+	 * single line instead of laying out the whole document again.
+	 */
+	lineTops: number[];
 }
 
 /** Text styles that influence how the textarea wraps and lays out lines. */
@@ -42,12 +48,11 @@ const MIRRORED_STYLES = [
 ] as const;
 
 /**
- * Vertical position (content coordinates, padding included) of the start of
- * each requested line inside the textarea. Computed with an invisible div that
- * copies the textarea's width and text styles, so wrapped lines are accounted
- * for exactly.
+ * An invisible div that copies the textarea's width and text styles, so text
+ * laid out inside it wraps exactly like in the textarea. The caller appends
+ * the content, measures and removes it.
  */
-function measureEditorLines(textarea: HTMLTextAreaElement, lines: number[]): number[] {
+export function createEditorMirror(textarea: HTMLTextAreaElement): HTMLDivElement {
 	const computed = getComputedStyle(textarea);
 	const mirror = document.createElement("div");
 	for (const property of MIRRORED_STYLES) {
@@ -64,31 +69,27 @@ function measureEditorLines(textarea: HTMLTextAreaElement, lines: number[]): num
 		whiteSpace: "pre-wrap",
 		overflowWrap: "break-word",
 	});
+	return mirror;
+}
 
+/** Top of every source line inside the textarea (see AnchorMap.lineTops). */
+function measureLineTops(textarea: HTMLTextAreaElement): number[] {
+	const mirror = createEditorMirror(textarea);
 	const sourceLines = textarea.value.split("\n");
-	const wanted = [...new Set(lines)].sort((a, b) => a - b);
-	const markers = new Map<number, HTMLSpanElement>();
-	let cursor = 0;
-	for (const line of wanted) {
-		if (line >= sourceLines.length) break;
-		if (line > cursor) {
-			mirror.append(sourceLines.slice(cursor, line).join("\n") + "\n");
-			cursor = line;
-		}
+	const markers: HTMLSpanElement[] = [];
+	const fragment = document.createDocumentFragment();
+	sourceLines.forEach((line, index) => {
 		const marker = document.createElement("span");
-		mirror.append(marker);
-		markers.set(line, marker);
-	}
-	mirror.append(sourceLines.slice(cursor).join("\n"));
+		markers.push(marker);
+		fragment.append(marker, index < sourceLines.length - 1 ? `${line}\n` : line);
+	});
+	mirror.append(fragment);
 
 	document.body.append(mirror);
 	const mirrorTop = mirror.getBoundingClientRect().top;
-	const positions = lines.map((line) => {
-		const marker = markers.get(line);
-		return marker ? marker.getBoundingClientRect().top - mirrorTop : NaN;
-	});
+	const tops = markers.map((marker) => marker.getBoundingClientRect().top - mirrorTop);
 	mirror.remove();
-	return positions;
+	return tops;
 }
 
 export function buildAnchorMap(
@@ -99,11 +100,9 @@ export function buildAnchorMap(
 	const blocks = Array.from(
 		preview.querySelectorAll<HTMLElement>(`article > [${SOURCE_LINE_ATTR}]`),
 	);
-	const lines = blocks.map((block) => Number(block.getAttribute(SOURCE_LINE_ATTR)));
-	const previewYs = blocks.map((block) => block.getBoundingClientRect().top - previewTop);
-	const editorYs = measureEditorLines(textarea, lines);
+	const lineTops = measureLineTops(textarea);
 
-	const map: AnchorMap = { editor: [0], preview: [0] };
+	const map: AnchorMap = { editor: [0], preview: [0], lineTops };
 	const push = (editorY: number, previewY: number) => {
 		// Only strictly increasing pairs: a non-monotonic map (hidden blocks,
 		// floats, …) could not be inverted for the preview → editor direction.
@@ -114,8 +113,11 @@ export function buildAnchorMap(
 		map.editor.push(editorY);
 		map.preview.push(previewY);
 	};
-	for (let index = 0; index < lines.length; index++) {
-		push(editorYs[index], previewYs[index]);
+	for (const block of blocks) {
+		const line = Number(block.getAttribute(SOURCE_LINE_ATTR));
+		const editorY = lineTops[line];
+		if (editorY === undefined) continue;
+		push(editorY, block.getBoundingClientRect().top - previewTop);
 	}
 	push(textarea.scrollHeight, preview.scrollHeight);
 	return map;
@@ -153,13 +155,17 @@ function interpolate(from: number[], to: number[], x: number): number {
  * bottom ⇔ bottom, and syncing in the two directions uses the same map, so a
  * pane can never "bottom out" while the other still has room to scroll.
  */
-function scrollPairs(map: AnchorMap, editor: HTMLElement, preview: HTMLElement): AnchorMap {
+function scrollPairs(
+	map: AnchorMap,
+	editor: HTMLElement,
+	preview: HTMLElement,
+): { editor: number[]; preview: number[] } {
 	const editorMax = editor.scrollHeight - editor.clientHeight;
 	const previewMax = preview.scrollHeight - preview.clientHeight;
 	const editorHalf = editor.clientHeight / 2;
 	const previewHalf = preview.clientHeight / 2;
 
-	const pairs: AnchorMap = { editor: [0], preview: [0] };
+	const pairs = { editor: [0], preview: [0] };
 	for (let index = 0; index < map.editor.length; index++) {
 		const editorTop = map.editor[index] - editorHalf;
 		const previewTop = map.preview[index] - previewHalf;

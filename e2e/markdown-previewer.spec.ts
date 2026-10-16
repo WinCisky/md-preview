@@ -179,6 +179,65 @@ test.describe('Markdown Previewer', () => {
 			}).toPass();
 		});
 
+		test('highlights the same word near the center in both panes while scrolling', async ({ page }) => {
+			await page.goto('./');
+			await waitForHydration(page);
+
+			const paragraphs = Array.from(
+				{ length: 80 },
+				(_, i) => `Paragraph ${i} has **bold${i}** text and a [link${i}](https://example.com/link${i}) inside.`
+			);
+			const input = page.locator('#markdown-input');
+			const preview = page.locator('#preview-pane');
+			await input.fill(paragraphs.join('\n\n'));
+			await expect(preview).toContainText('Paragraph 79');
+
+			// fill() leaves the caret, and so both panes, at the bottom: go back
+			// to the top, then a few real scroll steps down so the highlight
+			// sees a scroll speed.
+			await preview.evaluate((el) => el.scrollTo(0, 0));
+			await expect.poll(() => input.evaluate((el) => el.scrollTop)).toBe(0);
+			for (let step = 0; step < 8; step++) {
+				await preview.evaluate((el) => el.scrollBy(0, 120));
+				await page.waitForTimeout(16);
+			}
+
+			const previewHighlight = page.getByTestId('preview-scroll-highlight');
+			const editorHighlight = page.getByTestId('editor-scroll-highlight');
+			await expect(previewHighlight).toBeVisible();
+			await expect(editorHighlight).toBeVisible();
+
+			const word = await previewHighlight.getAttribute('data-word');
+			expect(word).toMatch(/\w{3,}/);
+			await expect(editorHighlight).toHaveAttribute('data-word', word!);
+
+			// The editor box points at that very word in the source…
+			const line = Number(await editorHighlight.getAttribute('data-line'));
+			const column = Number(await editorHighlight.getAttribute('data-column'));
+			const sourceWord = await input.evaluate(
+				(el: HTMLTextAreaElement, [line, column, length]) =>
+					el.value.split('\n')[line].slice(column, column + length),
+				[line, column, word!.length] as const
+			);
+			expect(sourceWord).toBe(word);
+
+			// …and both boxes sit around the vertical middle of their pane.
+			for (const [highlight, pane] of [
+				[previewHighlight, preview],
+				[editorHighlight, input],
+			] as const) {
+				const box = (await highlight.boundingBox())!;
+				const paneBox = (await pane.boundingBox())!;
+				const middle = paneBox.y + paneBox.height / 2;
+				expect(Math.abs(box.y + box.height / 2 - middle)).toBeLessThan(paneBox.height / 4);
+			}
+
+			// It fades out once scrolling stops.
+			await expect
+				.poll(() => previewHighlight.evaluate((el) => Number(getComputedStyle(el).opacity)))
+				.toBe(0);
+		});
+
 		test('scrolling the preview to the bottom scrolls the input to the bottom', async ({ page }) => {
 			await page.goto('./');
 

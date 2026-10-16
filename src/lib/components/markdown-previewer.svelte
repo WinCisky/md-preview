@@ -4,6 +4,13 @@
 	import DOMPurify from "dompurify";
 	import { renderMarkdown } from "$lib/markdown";
 	import { buildAnchorMap, syncedScrollTop, type AnchorMap } from "$lib/scroll-sync";
+	import {
+		boxWithin,
+		editorWordBox,
+		findCenterWord,
+		locateInSource,
+		type Box,
+	} from "$lib/scroll-highlight";
 	import TreeRenameInput from "$lib/components/tree-rename-input.svelte";
 	import DownloadIcon from "@lucide/svelte/icons/download";
 	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
@@ -102,8 +109,8 @@
 
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let previewEl: HTMLDivElement | null = $state(null);
-	let editorLineEl: HTMLDivElement | null = $state(null);
-	let previewLineEl: HTMLDivElement | null = $state(null);
+	let editorWordEl: HTMLDivElement | null = $state(null);
+	let previewWordEl: HTMLDivElement | null = $state(null);
 
 	// Depth of the nested dragenter/dragleave events: without a counter the
 	// overlay would disappear every time the cursor passes over a child of the
@@ -166,47 +173,101 @@
 	// would ping-pong forever.
 	const programmaticScrollTop = new WeakMap<HTMLElement, number>();
 
-	// Center-line indicator: its opacity follows the scroll speed (faster is
-	// more visible) and fades out once scrolling stops. Driven through inline
-	// styles in a rAF loop, outside of Svelte's reactivity: it changes on every
-	// frame.
-	const LINE_MAX_OPACITY = 0.5;
-	// Speed (px/ms) at which the line reaches its full opacity.
-	const LINE_FULL_SPEED = 3;
+	// Scroll highlight: the word nearest to the center of the preview is
+	// highlighted in both panes (see scroll-highlight.ts), so the eye can
+	// follow the same spot while the two sides scroll. Its opacity follows the
+	// scroll speed (faster is more visible, with a floor so slow scrolling
+	// still shows it) and fades out once scrolling stops. Everything goes
+	// through inline styles in rAF callbacks, outside of Svelte's reactivity:
+	// it changes on every frame.
+	const HIGHLIGHT_MIN_OPACITY = 0.4;
+	// Speed (px/ms) at which the highlight reaches its full opacity.
+	const HIGHLIGHT_FULL_SPEED = 3;
 	// Time constant of the fade out, in ms.
-	const LINE_FADE_MS = 180;
-	let lineOpacity = 0;
-	let lineFrame: number | null = null;
-	let lineLastFrame = 0;
+	const HIGHLIGHT_FADE_MS = 400;
+	// How far the highlight box extends around the word, in px.
+	const HIGHLIGHT_PAD_X = 3;
+	const HIGHLIGHT_PAD_Y = 1;
+	let highlightOpacity = 0;
+	let fadeFrame: number | null = null;
+	let fadeLastFrame = 0;
+	let positionFrame: number | null = null;
 	let lastScroll: { el: HTMLElement; top: number; time: number } | null = null;
 
-	function paintLines() {
-		const value = lineOpacity < 0.01 ? "0" : lineOpacity.toFixed(3);
-		if (editorLineEl) editorLineEl.style.opacity = value;
-		if (previewLineEl) previewLineEl.style.opacity = value;
+	function paintOpacity() {
+		const value = highlightOpacity < 0.01 ? "0" : highlightOpacity.toFixed(3);
+		if (editorWordEl) editorWordEl.style.opacity = value;
+		if (previewWordEl) previewWordEl.style.opacity = value;
 	}
 
-	function fadeLines(now: number) {
-		const elapsed = now - lineLastFrame;
-		lineLastFrame = now;
-		lineOpacity *= Math.exp(-elapsed / LINE_FADE_MS);
-		paintLines();
-		lineFrame = lineOpacity < 0.01 ? null : requestAnimationFrame(fadeLines);
+	function fadeHighlight(now: number) {
+		const elapsed = now - fadeLastFrame;
+		fadeLastFrame = now;
+		highlightOpacity *= Math.exp(-elapsed / HIGHLIGHT_FADE_MS);
+		paintOpacity();
+		fadeFrame = highlightOpacity < 0.01 ? null : requestAnimationFrame(fadeHighlight);
 	}
 
-	function bumpLines(source: HTMLElement) {
+	function bumpHighlight(source: HTMLElement) {
 		const now = performance.now();
 		const previous = lastScroll;
 		lastScroll = { el: source, top: source.scrollTop, time: now };
 		if (!previous || previous.el !== source || now - previous.time > 200) return;
-		const speed = Math.abs(source.scrollTop - previous.top) / Math.max(1, now - previous.time);
-		const target = Math.min(1, speed / LINE_FULL_SPEED) * LINE_MAX_OPACITY;
-		lineOpacity = Math.max(lineOpacity, target);
-		paintLines();
-		if (lineFrame === null) {
-			lineLastFrame = now;
-			lineFrame = requestAnimationFrame(fadeLines);
+		const distance = Math.abs(source.scrollTop - previous.top);
+		if (distance === 0) return;
+		const speed = distance / Math.max(1, now - previous.time);
+		const target =
+			HIGHLIGHT_MIN_OPACITY + (1 - HIGHLIGHT_MIN_OPACITY) * Math.min(1, speed / HIGHLIGHT_FULL_SPEED);
+		highlightOpacity = Math.max(highlightOpacity, target);
+		paintOpacity();
+		if (fadeFrame === null) {
+			fadeLastFrame = now;
+			fadeFrame = requestAnimationFrame(fadeHighlight);
 		}
+	}
+
+	function placeBox(el: HTMLElement | null, box: Box | null) {
+		if (!el) return;
+		if (!box) {
+			el.style.visibility = "hidden";
+			return;
+		}
+		el.style.visibility = "visible";
+		el.style.transform = `translate(${box.left - HIGHLIGHT_PAD_X}px, ${box.top - HIGHLIGHT_PAD_Y}px)`;
+		el.style.width = `${box.width + 2 * HIGHLIGHT_PAD_X}px`;
+		el.style.height = `${box.height + 2 * HIGHLIGHT_PAD_Y}px`;
+	}
+
+	function positionHighlight() {
+		positionFrame = null;
+		const textarea = textareaEl;
+		const preview = previewEl;
+		const previewWrapper = preview?.parentElement;
+		if (!textarea || !preview || !previewWrapper || highlightOpacity < 0.01) return;
+
+		const found = findCenterWord(preview);
+		placeBox(previewWordEl, found ? boxWithin(found.rect, previewWrapper) : null);
+		if (!found) {
+			placeBox(editorWordEl, null);
+			return;
+		}
+		anchorMap ??= buildAnchorMap(textarea, preview);
+		const source = locateInSource(textarea.value, found);
+		placeBox(editorWordEl, source ? editorWordBox(textarea, anchorMap.lineTops, source) : null);
+
+		// What is highlighted, for debugging and tests.
+		if (previewWordEl) previewWordEl.dataset.word = found.word;
+		if (editorWordEl) {
+			editorWordEl.dataset.word = source ? found.word : "";
+			editorWordEl.dataset.line = source ? String(source.line) : "";
+			editorWordEl.dataset.column = source ? String(source.column) : "";
+		}
+	}
+
+	// Once per frame at most: both panes fire "scroll" in the same frame (one
+	// by the user, the other by the sync).
+	function scheduleHighlight() {
+		if (positionFrame === null) positionFrame = requestAnimationFrame(positionHighlight);
 	}
 
 	// Scrolls `target` so that its center shows what is at the center of
@@ -218,7 +279,7 @@
 			if (Math.abs(source.scrollTop - expected) < 1) return;
 		}
 
-		bumpLines(source);
+		bumpHighlight(source);
 		if (!textareaEl || !previewEl) return;
 		anchorMap ??= buildAnchorMap(textareaEl, previewEl);
 		const next = syncedScrollTop(anchorMap, textareaEl, previewEl, sourceIsEditor);
@@ -233,8 +294,14 @@
 		const preview = previewEl;
 		if (!textarea || !preview) return;
 
-		const onTextareaScroll = () => syncScroll(textarea, preview, true);
-		const onPreviewScroll = () => syncScroll(preview, textarea, false);
+		const onTextareaScroll = () => {
+			syncScroll(textarea, preview, true);
+			scheduleHighlight();
+		};
+		const onPreviewScroll = () => {
+			syncScroll(preview, textarea, false);
+			scheduleHighlight();
+		};
 
 		textarea.addEventListener("scroll", onTextareaScroll, { passive: true });
 		preview.addEventListener("scroll", onPreviewScroll, { passive: true });
@@ -251,8 +318,10 @@
 			textarea.removeEventListener("scroll", onTextareaScroll);
 			preview.removeEventListener("scroll", onPreviewScroll);
 			resizeObserver.disconnect();
-			if (lineFrame !== null) cancelAnimationFrame(lineFrame);
-			lineFrame = null;
+			if (fadeFrame !== null) cancelAnimationFrame(fadeFrame);
+			if (positionFrame !== null) cancelAnimationFrame(positionFrame);
+			fadeFrame = null;
+			positionFrame = null;
 		};
 	});
 
@@ -748,8 +817,9 @@
 									onpaste={handlePaste}
 								/>
 								<div
-									bind:this={editorLineEl}
-									class="scroll-center-line"
+									bind:this={editorWordEl}
+									class="scroll-word-highlight"
+									data-testid="editor-scroll-highlight"
 									aria-hidden="true"
 								></div>
 								{#if isDraggingFiles}
@@ -773,8 +843,9 @@
 								</article>
 							</div>
 							<div
-								bind:this={previewLineEl}
-								class="scroll-center-line"
+								bind:this={previewWordEl}
+								class="scroll-word-highlight"
+								data-testid="preview-scroll-highlight"
 								aria-hidden="true"
 							></div>
 						</div>
