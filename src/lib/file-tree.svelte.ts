@@ -28,6 +28,29 @@ export const SEED_FILE_NAME = "welcome";
 export const SEED_CONTENT =
 	"# Hello Markdown\n\nType something on the left to see the preview on the right!\n\n- **Bold** text\n- *Italic* text\n- [A link](https://google.com)\n\n```javascript\nconsole.log('Hello World');\n```";
 
+/**
+ * Id of the last file opened, so a reload reopens it. `updatedAt` alone is not
+ * enough: it only moves when a file is modified, so a file opened but not
+ * edited would lose to the last one written.
+ */
+const LAST_OPENED_KEY = "md-preview:last-opened-file";
+
+function readLastOpened(): string | null {
+	try {
+		return localStorage.getItem(LAST_OPENED_KEY);
+	} catch {
+		return null;
+	}
+}
+
+function writeLastOpened(nodeId: string) {
+	try {
+		localStorage.setItem(LAST_OPENED_KEY, nodeId);
+	} catch {
+		// Storage unavailable (private mode, quota): fall back to updatedAt.
+	}
+}
+
 export interface TreeNode extends FileNode {
 	children: TreeNode[];
 }
@@ -190,6 +213,11 @@ export const fileTree = {
 			});
 			await reload();
 		}
+		const lastOpened = findNode(readLastOpened());
+		if (lastOpened?.type === "file") {
+			this.open(lastOpened.id);
+			return;
+		}
 		const latest = await getLatestFile();
 		if (latest) this.open(latest.id);
 	},
@@ -204,6 +232,7 @@ export const fileTree = {
 		if (!node || node.type !== "file") return;
 		selectedId = nodeId;
 		activeFileId = nodeId;
+		writeLastOpened(nodeId);
 		onOpenFile?.(node);
 	},
 

@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount, untrack } from "svelte";
 	import { mode, ModeWatcher } from "mode-watcher";
-	import { marked } from "$lib/markdown";
+	import DOMPurify from "dompurify";
+	import { renderMarkdown } from "$lib/markdown";
+	import { buildAnchorMap, syncedScrollTop, type AnchorMap } from "$lib/scroll-sync";
+	import TreeRenameInput from "$lib/components/tree-rename-input.svelte";
 	import DownloadIcon from "@lucide/svelte/icons/download";
 	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
 	import * as Resizable from "$lib/components/ui/resizable/index.js";
@@ -47,6 +50,15 @@
 	// rather than by a real user input.
 	let suppressNextSave = false;
 
+	// True once the user has really typed in the editor. The textarea value can
+	// also change without them (the browser restoring form state on reload,
+	// picked up by bind:value during hydration): that text must not be
+	// mistaken for an edit and win over the file being opened.
+	let userHasTyped = false;
+
+	// Inline rename of the open file from the editor header (double click).
+	let renamingTitle = $state(false);
+
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Attachments saved before an active file existed (nodeId still null): they
@@ -84,12 +96,14 @@
 	// Filled by the $effect below as the blobs are read from IndexedDB.
 	let attachmentUrls: Record<string, ResolvedAttachment> = $state({});
 
-	let rawHtml = $derived(marked.parse(markdownText) as string);
+	let rawHtml = $derived(renderMarkdown(markdownText));
 	let resolvedHtml = $derived(resolveAttachmentUrls(rawHtml, attachmentUrls));
 	let htmlContent = $state("");
 
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let previewEl: HTMLDivElement | null = $state(null);
+	let editorLineEl: HTMLDivElement | null = $state(null);
+	let previewLineEl: HTMLDivElement | null = $state(null);
 
 	// Depth of the nested dragenter/dragleave events: without a counter the
 	// overlay would disappear every time the cursor passes over a child of the
@@ -138,28 +152,80 @@
 	// effect would make the sidebar flash into view before closing again.
 	let sidebarOpen = $state(readStoredSidebarOpen());
 
-	// Guard flag (plain variable, not reactive state) used to ignore the
-	// "scroll" event fired by the browser when we programmatically set
-	// scrollTop on the sync target, which would otherwise cause an infinite
-	// ping-pong between the two panes.
-	let isSyncingScroll = false;
+	// Line-to-position map between the panes (see scroll-sync.ts). Measuring
+	// it means a layout pass over the whole document, so it is cached and only
+	// rebuilt, lazily on the next scroll, after the text or the sizes change.
+	let anchorMap: AnchorMap | null = null;
 
-	// Syncs scroll position by percentage (not raw pixels) so the two panes
-	// stay aligned proportionally even though their width and content height
-	// can differ.
-	function syncScroll(source: HTMLElement, target: HTMLElement) {
-		if (isSyncingScroll) return;
-		isSyncingScroll = true;
+	function invalidateAnchors() {
+		anchorMap = null;
+	}
 
-		const sourceMaxScroll = source.scrollHeight - source.clientHeight;
-		const ratio = sourceMaxScroll > 0 ? source.scrollTop / sourceMaxScroll : 0;
+	// The scrollTop we last assigned to each pane. The "scroll" event the
+	// browser fires in response must not be synced back, or the two panes
+	// would ping-pong forever.
+	const programmaticScrollTop = new WeakMap<HTMLElement, number>();
 
-		const targetMaxScroll = target.scrollHeight - target.clientHeight;
-		target.scrollTop = ratio * targetMaxScroll;
+	// Center-line indicator: its opacity follows the scroll speed (faster is
+	// more visible) and fades out once scrolling stops. Driven through inline
+	// styles in a rAF loop, outside of Svelte's reactivity: it changes on every
+	// frame.
+	const LINE_MAX_OPACITY = 0.5;
+	// Speed (px/ms) at which the line reaches its full opacity.
+	const LINE_FULL_SPEED = 3;
+	// Time constant of the fade out, in ms.
+	const LINE_FADE_MS = 180;
+	let lineOpacity = 0;
+	let lineFrame: number | null = null;
+	let lineLastFrame = 0;
+	let lastScroll: { el: HTMLElement; top: number; time: number } | null = null;
 
-		requestAnimationFrame(() => {
-			isSyncingScroll = false;
-		});
+	function paintLines() {
+		const value = lineOpacity < 0.01 ? "0" : lineOpacity.toFixed(3);
+		if (editorLineEl) editorLineEl.style.opacity = value;
+		if (previewLineEl) previewLineEl.style.opacity = value;
+	}
+
+	function fadeLines(now: number) {
+		const elapsed = now - lineLastFrame;
+		lineLastFrame = now;
+		lineOpacity *= Math.exp(-elapsed / LINE_FADE_MS);
+		paintLines();
+		lineFrame = lineOpacity < 0.01 ? null : requestAnimationFrame(fadeLines);
+	}
+
+	function bumpLines(source: HTMLElement) {
+		const now = performance.now();
+		const previous = lastScroll;
+		lastScroll = { el: source, top: source.scrollTop, time: now };
+		if (!previous || previous.el !== source || now - previous.time > 200) return;
+		const speed = Math.abs(source.scrollTop - previous.top) / Math.max(1, now - previous.time);
+		const target = Math.min(1, speed / LINE_FULL_SPEED) * LINE_MAX_OPACITY;
+		lineOpacity = Math.max(lineOpacity, target);
+		paintLines();
+		if (lineFrame === null) {
+			lineLastFrame = now;
+			lineFrame = requestAnimationFrame(fadeLines);
+		}
+	}
+
+	// Scrolls `target` so that its center shows what is at the center of
+	// `source` (see scroll-sync.ts).
+	function syncScroll(source: HTMLElement, target: HTMLElement, sourceIsEditor: boolean) {
+		const expected = programmaticScrollTop.get(source);
+		if (expected !== undefined) {
+			programmaticScrollTop.delete(source);
+			if (Math.abs(source.scrollTop - expected) < 1) return;
+		}
+
+		bumpLines(source);
+		if (!textareaEl || !previewEl) return;
+		anchorMap ??= buildAnchorMap(textareaEl, previewEl);
+		const next = syncedScrollTop(anchorMap, textareaEl, previewEl, sourceIsEditor);
+		if (Math.abs(target.scrollTop - next) < 1) return;
+		target.scrollTop = next;
+		// Read back: the browser rounds/clamps the assigned value.
+		programmaticScrollTop.set(target, target.scrollTop);
 	}
 
 	$effect(() => {
@@ -167,25 +233,36 @@
 		const preview = previewEl;
 		if (!textarea || !preview) return;
 
-		const onTextareaScroll = () => syncScroll(textarea, preview);
-		const onPreviewScroll = () => syncScroll(preview, textarea);
+		const onTextareaScroll = () => syncScroll(textarea, preview, true);
+		const onPreviewScroll = () => syncScroll(preview, textarea, false);
 
-		textarea.addEventListener("scroll", onTextareaScroll);
-		preview.addEventListener("scroll", onPreviewScroll);
+		textarea.addEventListener("scroll", onTextareaScroll, { passive: true });
+		preview.addEventListener("scroll", onPreviewScroll, { passive: true });
+
+		// Any size change (pane resize, images loading, wrapping) moves the
+		// anchors.
+		const resizeObserver = new ResizeObserver(invalidateAnchors);
+		resizeObserver.observe(textarea);
+		resizeObserver.observe(preview);
+		const article = preview.querySelector("article");
+		if (article) resizeObserver.observe(article);
 
 		return () => {
 			textarea.removeEventListener("scroll", onTextareaScroll);
 			preview.removeEventListener("scroll", onPreviewScroll);
+			resizeObserver.disconnect();
+			if (lineFrame !== null) cancelAnimationFrame(lineFrame);
+			lineFrame = null;
 		};
 	});
 
+	// Sanitized synchronously: with an async step (the old dynamic import) an
+	// older render resolving late could overwrite a newer one. Runs in an
+	// effect, i.e. only in the browser and after hydration, so the server
+	// markup ({@html ""}) always matches.
 	$effect(() => {
-		const html = resolvedHtml;
-		if (typeof window !== "undefined") {
-			import("dompurify").then((dompurify) => {
-				htmlContent = dompurify.default.sanitize(html, SANITIZE_CONFIG);
-			});
-		}
+		htmlContent = DOMPurify.sanitize(resolvedHtml, SANITIZE_CONFIG);
+		invalidateAnchors();
 	});
 
 	/**
@@ -403,6 +480,14 @@
 			return;
 		}
 
+		// The initial run: nothing the user wrote, nothing to save.
+		if (!userHasTyped) return;
+
+		scheduleSave(text);
+	});
+
+	/** Marks `text` as an unsaved edit and starts the save debounce. */
+	function scheduleSave(text: string) {
 		if (saveTimer !== null) {
 			clearTimeout(saveTimer);
 			saveTimer = null;
@@ -420,6 +505,19 @@
 			saveTimer = null;
 			performPendingSave(currentFileId, text);
 		}, SAVE_DEBOUNCE_MS);
+	}
+
+	// Flags real user input. Capture phase, registered directly on the
+	// textarea: it has to run before bind:value's own listener, because the
+	// saving $effect can flush right after that one returns.
+	$effect(() => {
+		const textarea = textareaEl;
+		if (!textarea) return;
+		const markTyped = () => {
+			userHasTyped = true;
+		};
+		textarea.addEventListener("input", markTyped, { capture: true });
+		return () => textarea.removeEventListener("input", markTyped, { capture: true });
 	});
 
 	/**
@@ -433,7 +531,8 @@
 		// The first file comes from init(), which is async: if the user has
 		// already typed something in the meantime we do not throw it away, their
 		// text becomes the content of the file just opened.
-		const keepUserText = node !== null && currentFileId === null && markdownText !== "";
+		const keepUserText =
+			node !== null && currentFileId === null && userHasTyped && markdownText !== "";
 
 		// With keepUserText the running debounce must not be forced: it will fire
 		// on its own and at that point write into the newly attached file.
@@ -454,6 +553,15 @@
 	}
 
 	onMount(() => {
+		// Text typed before hydration was picked up by bind:value without any
+		// input event reaching us: it is still the user's, keep and save it.
+		// (Form-state restoration by the browser, which would look the same, is
+		// disabled with autocomplete="off" on the textarea.)
+		if (markdownText !== "" && !userHasTyped) {
+			userHasTyped = true;
+			scheduleSave(markdownText);
+		}
+
 		// Loads the tree and reopens the last file being worked on, so reloading
 		// the page does not lose the context. On the very first open the tree is
 		// empty and init() creates the sample file.
@@ -569,10 +677,34 @@
 								<div class="flex flex-wrap gap-2 items-center">
 									<Sidebar.Trigger />
 
-									<small
-										class="text-sm leading-none font-medium"
-										data-testid="active-file-name">{activeFileName}</small
-									>
+									{#if renamingTitle && fileTree.activeFile}
+										{@const file = fileTree.activeFile}
+										<TreeRenameInput
+											node={file}
+											testId="active-file-rename-input"
+											class="w-48 font-medium"
+											oncommit={(value) => {
+												renamingTitle = false;
+												fileTree.rename(file.id, value).catch((err) => {
+													console.error("Could not rename the file:", err);
+												});
+											}}
+											oncancel={() => (renamingTitle = false)}
+										/>
+									{:else}
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<small
+											class={cn(
+												"text-sm leading-none font-medium select-none",
+												fileTree.activeFile && "cursor-text",
+											)}
+											title={fileTree.activeFile ? "Double click to rename" : undefined}
+											data-testid="active-file-name"
+											ondblclick={() => {
+												if (fileTree.activeFile) renamingTitle = true;
+											}}>{activeFileName}</small
+										>
+									{/if}
 									<div
 										class={cn(
 											"size-3 rounded-full",
@@ -612,8 +744,14 @@
 									placeholder="Type your markdown here..."
 									bind:value={markdownText}
 									bind:ref={textareaEl}
+									autocomplete="off"
 									onpaste={handlePaste}
 								/>
+								<div
+									bind:this={editorLineEl}
+									class="scroll-center-line"
+									aria-hidden="true"
+								></div>
 								{#if isDraggingFiles}
 									<div
 										class="bg-background/80 border-primary text-primary pointer-events-none absolute inset-0 flex items-center justify-center gap-2 rounded-md border-2 border-dashed text-sm font-medium"
@@ -628,10 +766,17 @@
 					</Resizable.Pane>
 					<Resizable.Handle />
 					<Resizable.Pane defaultSize={50} minSize={20}>
-						<div id="preview-pane" class="h-full overflow-y-auto p-4 sm:p-8" bind:this={previewEl}>
-							<article class="markdown-body">
-								{@html htmlContent}
-							</article>
+						<div class="relative h-full">
+							<div id="preview-pane" class="h-full overflow-y-auto p-4 sm:p-8" bind:this={previewEl}>
+								<article class="markdown-body">
+									{@html htmlContent}
+								</article>
+							</div>
+							<div
+								bind:this={previewLineEl}
+								class="scroll-center-line"
+								aria-hidden="true"
+							></div>
 						</div>
 					</Resizable.Pane>
 				</Resizable.PaneGroup>

@@ -68,3 +68,44 @@ export const marked = new Marked(
 		},
 	}),
 );
+
+/** Attribute carrying the 0-based source line of a top-level preview block. */
+export const SOURCE_LINE_ATTR = "data-source-line";
+
+function countNewlines(text: string): number {
+	let count = 0;
+	for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) count++;
+	return count;
+}
+
+/**
+ * Same output as `marked.parse`, but every top-level block element is tagged
+ * with the line of the source where it starts. The scroll sync uses those
+ * anchors to align the editor and the preview line by line instead of by
+ * percentage, which drifts badly on long documents with images, code blocks
+ * or tables.
+ *
+ * Each top-level token is rendered on its own and the attribute is injected in
+ * its first opening tag: wrapping the blocks in extra elements would break the
+ * typography styles that rely on direct children/siblings.
+ */
+export function renderMarkdown(text: string): string {
+	const tokens = marked.lexer(text);
+	const walkTokens = marked.defaults.walkTokens;
+	if (walkTokens) marked.walkTokens(tokens, walkTokens);
+
+	let line = 0;
+	let html = "";
+	for (const token of tokens) {
+		const startLine = line;
+		line += countNewlines(token.raw);
+		if (token.type === "space" || token.type === "def") continue;
+
+		// The reference-style links ([text][ref]) are resolved through the
+		// `links` map of the token list: it has to travel with every slice.
+		const single = Object.assign([token], { links: tokens.links }) as typeof tokens;
+		const chunk = marked.parser(single);
+		html += chunk.replace(/^(\s*<[a-zA-Z][\w-]*)/, `$1 ${SOURCE_LINE_ATTR}="${startLine}"`);
+	}
+	return html;
+}

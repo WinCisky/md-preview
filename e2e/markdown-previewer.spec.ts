@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { waitForHydration } from './helpers';
 
 test.describe('Markdown Previewer', () => {
 	test('shows default markdown rendered in the preview pane', async ({ page }) => {
@@ -132,6 +133,49 @@ test.describe('Markdown Previewer', () => {
 					(el) => Math.abs(el.scrollTop - (el.scrollHeight - el.clientHeight)) < 2
 				);
 				expect(atBottom).toBe(true);
+			}).toPass();
+		});
+
+		test('aligns the centers of the two panes', async ({ page }) => {
+			await page.goto('./');
+			await waitForHydration(page);
+
+			// Blocks of very different rendered heights, so a proportional sync
+			// would drift away from the line under the center.
+			const blocks = Array.from({ length: 120 }, (_, i) =>
+				i % 10 === 0 ? `# Heading ${i}` : `Paragraph ${i}`
+			);
+			blocks.splice(60, 0, '```\n' + Array.from({ length: 40 }, (_, i) => `code ${i}`).join('\n') + '\n```');
+			const input = page.locator('#markdown-input');
+			const preview = page.locator('#preview-pane');
+			await input.fill(blocks.join('\n\n'));
+			await expect(preview).toContainText('Paragraph 119');
+
+			// Put the line of "Paragraph 95" (after the tall code block) at the
+			// center of the editor; these lines are short and never wrap.
+			const targetLine = await input.evaluate((el: HTMLTextAreaElement) => {
+				const line = el.value.split('\n').indexOf('Paragraph 95');
+				const style = getComputedStyle(el);
+				const lineHeight = parseFloat(style.lineHeight);
+				const top = parseFloat(style.paddingTop) + (line + 0.5) * lineHeight - el.clientHeight / 2;
+				el.scrollBy(0, top - el.scrollTop);
+				return line;
+			});
+
+			await expect(async () => {
+				const centerBlockLine = await preview.evaluate((el) => {
+					const rect = el.getBoundingClientRect();
+					const center = rect.top + rect.height / 2;
+					const blocks = Array.from(el.querySelectorAll<HTMLElement>('article > [data-source-line]'));
+					let closest = { line: -1, distance: Infinity };
+					for (const block of blocks) {
+						const r = block.getBoundingClientRect();
+						const distance = Math.abs((r.top + r.bottom) / 2 - center);
+						if (distance < closest.distance) closest = { line: Number(block.dataset.sourceLine), distance };
+					}
+					return closest.line;
+				});
+				expect(centerBlockLine).toBe(targetLine);
 			}).toPass();
 		});
 

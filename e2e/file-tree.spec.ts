@@ -244,4 +244,48 @@ test.describe('File tree', () => {
 		await expect(page.getByTestId('active-file-name')).toHaveText('notes');
 		await expect(page.locator('#markdown-input')).toHaveValue('# Persisted');
 	});
+	test('reopens the last opened file after a reload, even if not edited', async ({ page }) => {
+		await gotoEditor(page);
+		await page.getByTestId('tree-root').click();
+		await createTreeNode(page, 'file', 'notes');
+		await page.locator('#markdown-input').fill('# Notes');
+		await waitForNodeContent(page, 'notes', /# Notes/);
+
+		// welcome is older (by updatedAt) but it is the one opened last.
+		await page.locator('[data-name="welcome"]').click();
+		await expect(page.getByTestId('active-file-name')).toHaveText('welcome');
+
+		await page.goto('./');
+		await expect(page.getByTestId('active-file-name')).toHaveText('welcome');
+		await expect(page.getByRole('heading', { name: 'Hello Markdown', level: 1 })).toBeVisible();
+	});
+
+	test('a freshly created node keeps its rename field when focus is stolen', async ({ page }) => {
+		await gotoEditor(page);
+		await page.getByRole('button', { name: 'New file' }).click();
+		const input = page.getByTestId('tree-rename-input');
+		await expect(input).toBeFocused();
+
+		// Something else grabbing the focus (as a closing menu does) must not
+		// confirm the provisional name.
+		await page.locator('#markdown-input').evaluate((el: HTMLElement) => el.focus());
+		await expect(input).toBeFocused();
+
+		await input.fill('kept');
+		await input.press('Enter');
+		await expect(page.locator('[data-name="kept"]')).toBeVisible();
+	});
+
+	test('double clicking the open file name renames it in the tree too', async ({ page }) => {
+		await gotoEditor(page);
+		await page.getByTestId('active-file-name').dblclick();
+		const input = page.getByTestId('active-file-rename-input');
+		await expect(input).toBeFocused();
+		await input.fill('renamed');
+		await input.press('Enter');
+
+		await expect(page.getByTestId('active-file-name')).toHaveText('renamed');
+		await expect(page.locator('[data-name="renamed"]')).toBeVisible();
+		await expect(page.locator('[data-name="welcome"]')).toHaveCount(0);
+	});
 });

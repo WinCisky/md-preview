@@ -551,3 +551,30 @@
 		color: #1f2328 !important;
 	}
 }
+/* Horizontal line marking the center of the editor and of the preview while
+   scrolling: the scroll sync aligns what sits under these two lines. Its
+   opacity is driven from JS according to the scroll speed.
+   Uses the theme tokens (--primary flips with light/dark, --radius-sm, the
+   ring halo) so it reads like the rest of the shadcn UI. It is a short solid
+   tick on the left edge of each pane rather than a full-width line, so it
+   marks the center without covering the text. */
+.scroll-center-line {
+	position: absolute;
+	left: 0;
+	width: 30px;
+	top: 50%;
+	height: 1px;
+	margin-top: -0.5px;
+	border-radius: var(--radius-sm);
+	background: var(--primary);
+	box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 20%, transparent);
+	opacity: 0;
+	pointer-events: none;
+	z-index: 10;
+}
+
+@media print {
+	.scroll-center-line {
+		display: none;
+	}
+}
