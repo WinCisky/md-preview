@@ -675,7 +675,35 @@
 		link.href = url;
 		link.download = fileName;
 		link.click();
-		URL.revokeObjectURL(url);
+		// Revoked on the next tick: some browsers start reading the blob only
+		// after the click handler returns.
+		setTimeout(() => URL.revokeObjectURL(url), 0);
+	}
+
+	// True while a .docx is being built: avoids concurrent exports on double click.
+	let exportingDocx = $state(false);
+
+	/**
+	 * Word export. The converter is loaded on demand (dynamic import), so it
+	 * adds nothing to the initial bundle. Images are embedded: attachments are
+	 * read from IndexedDB, remote ones fetched (alt text if that fails).
+	 */
+	async function downloadDocx() {
+		if (exportingDocx) return;
+		exportingDocx = true;
+		try {
+			const { buildDocx } = await import("$lib/docx");
+			const base = exportBaseName().replace(/\.md$/i, "") || "document";
+			const blob = await buildDocx(markdownText, {
+				title: base,
+				resolveAttachment: async (id) => (await getAttachment(id))?.blob,
+			});
+			triggerDownload(blob, `${base}.docx`);
+		} catch (err) {
+			console.error("Could not export the Word document:", err);
+		} finally {
+			exportingDocx = false;
+		}
 	}
 
 	/**
@@ -791,6 +819,16 @@
 									>
 										<DownloadIcon />
 										.md
+									</Button>
+									<Button
+										size="sm"
+										variant="outline"
+										aria-label="Download Word"
+										disabled={exportingDocx}
+										onclick={downloadDocx}
+									>
+										<DownloadIcon />
+										.docx
 									</Button>
 									<Button size="sm" aria-label="Download PDF" onclick={downloadPdf}>
 										<DownloadIcon />
