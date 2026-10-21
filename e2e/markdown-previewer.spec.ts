@@ -19,6 +19,61 @@ test.describe('Markdown Previewer', () => {
 		await expect(page.locator('article strong')).toHaveText('bold');
 	});
 
+	test('renders subscript and superscript', async ({ page }) => {
+		await page.goto('./');
+
+		const input = page.locator('#markdown-input');
+		await input.fill('H~2~O, E = mc^2^ and ~~struck~~');
+
+		const article = page.locator('article');
+		await expect(article.locator('sub')).toHaveText('2');
+		await expect(article.locator('sup')).toHaveText('2');
+		await expect(article.locator('del')).toHaveText('struck');
+	});
+
+	test('renders highlighted text', async ({ page }) => {
+		await page.goto('./');
+
+		const input = page.locator('#markdown-input');
+		await input.fill('I need to highlight these ==very important words==, but a == b stays.');
+
+		const article = page.locator('article');
+		await expect(article.locator('mark')).toHaveText('very important words');
+		await expect(article).toContainText('a == b stays');
+	});
+
+	test('renders definition lists', async ({ page }) => {
+		await page.goto('./');
+
+		const input = page.locator('#markdown-input');
+		await input.fill('Apple\n: A fruit\n: A company\n\nterm\n: definition');
+
+		const list = page.locator('article dl');
+		await expect(list.locator('dt')).toHaveText(['Apple', 'term']);
+		await expect(list.locator('dd')).toHaveText(['A fruit', 'A company', 'definition']);
+	});
+
+	test('renders GitHub-style alerts', async ({ page }) => {
+		await page.goto('./');
+
+		const input = page.locator('#markdown-input');
+		const types = ['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'];
+		await input.fill(
+			types.map((type) => `> [!${type}]\n> Body of ${type}`).join('\n\n') + '\n\n> [!NOTE]\n\n> plain quote',
+		);
+
+		const article = page.locator('article');
+		for (const type of types) {
+			const alert = article.locator(`.markdown-alert-${type.toLowerCase()}`);
+			await expect(alert.locator('.markdown-alert-title')).toHaveText(type[0] + type.slice(1).toLowerCase());
+			await expect(alert.locator('.markdown-alert-title svg')).toHaveCount(1);
+			await expect(alert.locator('p').last()).toHaveText(`Body of ${type}`);
+		}
+		// A marker without content stays a regular blockquote.
+		await expect(article.locator('.markdown-alert')).toHaveCount(5);
+		await expect(article.locator('blockquote')).toHaveCount(2);
+	});
+
 	test('keeps updating the preview across multiple consecutive edits', async ({ page }) => {
 		// Regression test: the preview effect must react to every change of the
 		// markdown input, not just the first one after mount.

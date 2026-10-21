@@ -142,6 +142,11 @@
 	--md-fg-muted: #59636e;
 	--md-accent: #0969da;
 	--md-danger: #cf222e;
+	--md-alert-note: #0969da;
+	--md-alert-tip: #1a7f37;
+	--md-alert-important: #8250df;
+	--md-alert-warning: #9a6700;
+	--md-alert-caution: #cf222e;
 
 	color: var(--foreground);
 	font-size: 16px;
@@ -156,6 +161,11 @@
 	--md-fg-muted: #8b949e;
 	--md-accent: #4493f8;
 	--md-danger: #f85149;
+	--md-alert-note: #4493f8;
+	--md-alert-tip: #3fb950;
+	--md-alert-important: #ab7df8;
+	--md-alert-warning: #d29922;
+	--md-alert-caution: #f85149;
 }
 
 .markdown-body > *:first-child {
@@ -255,6 +265,18 @@
 	padding-left: 0.5em;
 }
 
+/* Task list items (marked emits no class): hide the bullet, keep the checkbox. */
+.markdown-body li:has(> input[type="checkbox"]:first-child),
+.markdown-body li:has(> p:first-child > input[type="checkbox"]:first-child) {
+	list-style: none;
+}
+
+.markdown-body li > input[type="checkbox"]:first-child,
+.markdown-body li > p:first-child > input[type="checkbox"]:first-child {
+	margin: 0 0.35em 0.2em -1.4em;
+	vertical-align: middle;
+}
+
 .markdown-body img {
 	max-width: 100%;
 	box-sizing: content-box;
@@ -281,6 +303,45 @@
 }
 .markdown-body blockquote > :last-child {
 	margin-bottom: 0;
+}
+
+/* GitHub-style alerts (> [!NOTE], > [!TIP], ...) */
+.markdown-body .markdown-alert {
+	--md-alert-color: var(--md-alert-note);
+	margin: 0 0 16px 0;
+	padding: 0.5rem 1em;
+	color: inherit;
+	border-left: 0.25em solid var(--md-alert-color);
+}
+.markdown-body .markdown-alert > :first-child {
+	margin-top: 0;
+}
+.markdown-body .markdown-alert > :last-child {
+	margin-bottom: 0;
+}
+.markdown-body .markdown-alert .markdown-alert-title {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-weight: 500;
+	line-height: 1;
+	color: var(--md-alert-color);
+}
+.markdown-body .markdown-alert .octicon {
+	fill: currentColor;
+	flex-shrink: 0;
+}
+.markdown-body .markdown-alert-tip {
+	--md-alert-color: var(--md-alert-tip);
+}
+.markdown-body .markdown-alert-important {
+	--md-alert-color: var(--md-alert-important);
+}
+.markdown-body .markdown-alert-warning {
+	--md-alert-color: var(--md-alert-warning);
+}
+.markdown-body .markdown-alert-caution {
+	--md-alert-color: var(--md-alert-caution);
 }
 
 .markdown-body table {
@@ -454,6 +515,18 @@
 	font-weight: 600;
 }
 
+/* ==Highlighted text==: the app's amber accent, translucent so it reads well
+   on both the light and the dark canvas. */
+.markdown-body mark {
+	padding: 0 0.15em;
+	color: inherit;
+	background-color: color-mix(in oklch, var(--highlight) 40%, transparent);
+	border-radius: 3px;
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
+	print-color-adjust: exact;
+}
+
 .markdown-body dl {
 	padding: 0;
 }
@@ -522,6 +595,11 @@
 		--md-fg-muted: #59636e;
 		--md-accent: #0969da;
 		--md-danger: #cf222e;
+		--md-alert-note: #0969da;
+		--md-alert-tip: #1a7f37;
+		--md-alert-important: #8250df;
+		--md-alert-warning: #9a6700;
+		--md-alert-caution: #cf222e;
 		color: #1f2328;
 		font-size: 12pt;
 	}
@@ -529,6 +607,7 @@
 	.markdown-body pre,
 	.markdown-body table,
 	.markdown-body blockquote,
+	.markdown-body .markdown-alert,
 	.markdown-body img {
 		break-inside: avoid;
 	}
