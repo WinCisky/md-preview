@@ -288,4 +288,78 @@ test.describe('File tree', () => {
 		await expect(page.locator('[data-name="renamed"]')).toBeVisible();
 		await expect(page.locator('[data-name="welcome"]')).toHaveCount(0);
 	});
+
+	test('dropping markdown files from the OS adds them to the folder under the pointer', async ({
+		page,
+	}) => {
+		await gotoEditor(page);
+		await createTreeNode(page, 'folder', 'drafts');
+
+		// Synthetic events: the DataTransfer is kept on window between the
+		// dragover and the drop so the highlight can be asserted in between.
+		const accepted = await page.evaluate(() => {
+			const target = document.querySelector<HTMLElement>('[data-name="drafts"]')!;
+			const dataTransfer = new DataTransfer();
+			dataTransfer.items.add(new File(['# Imported\n\nfrom disk'], 'notes.md', { type: '' }));
+			dataTransfer.items.add(new File(['ignored'], 'photo.png', { type: 'image/png' }));
+			(window as unknown as { __dt: DataTransfer }).__dt = dataTransfer;
+			const event = new DragEvent('dragover', { dataTransfer, bubbles: true, cancelable: true });
+			target.dispatchEvent(event);
+			return event.defaultPrevented;
+		});
+		expect(accepted).toBe(true);
+		await expect(page.locator('[data-name="drafts"]')).toHaveAttribute('data-drop-target', '');
+
+		await page.evaluate(() => {
+			const target = document.querySelector<HTMLElement>('[data-name="drafts"]')!;
+			const dataTransfer = (window as unknown as { __dt: DataTransfer }).__dt;
+			target.dispatchEvent(new DragEvent('drop', { dataTransfer, bubbles: true, cancelable: true }));
+		});
+
+		await expect(page.getByTestId('active-file-name')).toHaveText('notes');
+		await expect(page.getByRole('heading', { name: 'Imported', level: 1 })).toBeVisible();
+		await expect(page.locator('[data-drop-target]')).toHaveCount(0);
+
+		const nodes = await readNodes(page);
+		const folder = nodes.find((node) => node.name === 'drafts')!;
+		expect(nodes.find((node) => node.name === 'notes')).toMatchObject({
+			parentId: folder.id,
+			content: '# Imported\n\nfrom disk',
+		});
+		expect(nodes.find((node) => node.name.startsWith('photo'))).toBeUndefined();
+	});
+
+	test('files not updated for over a month are shown as old', async ({ page }) => {
+		await gotoEditor(page);
+		const row = page.locator('[data-name="welcome"]');
+		await expect(row).not.toHaveAttribute('data-old');
+
+		await page.evaluate(
+			() =>
+				new Promise<void>((resolve, reject) => {
+					const request = indexedDB.open('md-preview-files', 1);
+					request.onerror = () => reject(request.error);
+					request.onsuccess = () => {
+						const db = request.result;
+						const store = db.transaction('nodes', 'readwrite').objectStore('nodes');
+						const all = store.getAll();
+						all.onsuccess = () => {
+							for (const node of all.result) {
+								store.put({ ...node, updatedAt: Date.now() - 40 * 24 * 60 * 60 * 1000 });
+							}
+							store.transaction.oncomplete = () => {
+								db.close();
+								resolve();
+							};
+						};
+					};
+				})
+		);
+		await page.reload();
+		await waitForHydration(page);
+
+		await expect(row).toHaveAttribute('data-old', '');
+		await expect(row).toHaveCSS('opacity', '0.6');
+		await expect(row.locator('svg.lucide-file-clock')).toBeVisible();
+	});
 });

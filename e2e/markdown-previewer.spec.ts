@@ -311,4 +311,34 @@ test.describe('Markdown Previewer', () => {
 			}).toPass();
 		});
 	});
+
+	test('typing at the end of the document scrolls the preview to the bottom', async ({ page }) => {
+		await page.goto('./');
+		await waitForHydration(page);
+
+		const input = page.locator('#markdown-input');
+		const long = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join('\n\n');
+		await input.fill(long);
+		// Back to the top in both panes, then type at the very end.
+		await page.evaluate(() => {
+			document.querySelector('#markdown-input')!.scrollTop = 0;
+			document.querySelector('#preview-pane')!.scrollTop = 0;
+		});
+		await page.waitForTimeout(100);
+		await page.evaluate(() => {
+			const textarea = document.querySelector<HTMLTextAreaElement>('#markdown-input')!;
+			textarea.focus();
+			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+		});
+		await page.keyboard.type('\n\nThe end');
+
+		await expect(page.locator('article')).toContainText('The end');
+		await expect(async () => {
+			const atBottom = await page.evaluate(() => {
+				const preview = document.querySelector('#preview-pane')!;
+				return preview.scrollHeight - preview.clientHeight - preview.scrollTop < 2;
+			});
+			expect(atBottom).toBe(true);
+		}).toPass();
+	});
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from "svelte";
+	import { onMount, tick, untrack } from "svelte";
 	import { mode, ModeWatcher } from "mode-watcher";
 	import DOMPurify from "dompurify";
 	import { renderMarkdown } from "$lib/markdown";
@@ -332,7 +332,27 @@
 	$effect(() => {
 		htmlContent = DOMPurify.sanitize(resolvedHtml, SANITIZE_CONFIG);
 		invalidateAnchors();
+		if (followEnd) {
+			followEnd = false;
+			tick().then(scrollPreviewToEnd);
+		}
 	});
+
+	// Set by an edit made at the end of the document (only whitespace after
+	// the caret): the content the user is writing is appended to the bottom of
+	// the preview, which would otherwise stay where it was and hide it.
+	let followEnd = false;
+
+	function scrollPreviewToEnd() {
+		const preview = previewEl;
+		if (!preview) return;
+		const bottom = preview.scrollHeight - preview.clientHeight;
+		if (bottom - preview.scrollTop < 1) return;
+		preview.scrollTop = bottom;
+		// Not synced back to the editor: the caret is already where the user
+		// wants it, the editor must not jump.
+		programmaticScrollTop.set(preview, preview.scrollTop);
+	}
 
 	/**
 	 * Keeps `attachmentUrls` aligned with the references present in the text:
@@ -584,6 +604,7 @@
 		if (!textarea) return;
 		const markTyped = () => {
 			userHasTyped = true;
+			followEnd = textarea.value.slice(textarea.selectionEnd ?? 0).trim() === "";
 		};
 		textarea.addEventListener("input", markTyped, { capture: true });
 		return () => textarea.removeEventListener("input", markTyped, { capture: true });
@@ -610,6 +631,8 @@
 		if (node) adoptPendingAttachments(node.id);
 		if (keepUserText) return;
 
+		// A just-opened file starts from the top, whatever the last edit was.
+		followEnd = false;
 		const content = node?.content ?? "";
 		// If the content already matches what is shown the $effect does not run
 		// again: raising the flag would leave it pending and would end up

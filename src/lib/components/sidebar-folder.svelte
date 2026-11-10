@@ -24,20 +24,15 @@
 		if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
 	}
 
+	// dragOver calls preventDefault only when the drop is legal: elsewhere the
+	// browser shows the "forbidden" cursor with no extra code needed.
 	function handleDragOver(event: DragEvent) {
-		if (!fileTree.canMove(fileTree.dragId, node.id)) return;
-		// preventDefault only when the move is legal: elsewhere the browser
-		// shows the "forbidden" cursor with no extra code needed.
-		event.preventDefault();
-		event.stopPropagation();
-		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-		fileTree.setDropTarget(node.id);
+		if (fileTree.dragOver(event, node.id)) event.stopPropagation();
 	}
 
 	function handleDrop(event: DragEvent) {
-		event.preventDefault();
 		event.stopPropagation();
-		fileTree.drop(node.id);
+		fileTree.dropEvent(event, node.id);
 	}
 </script>
 

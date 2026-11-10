@@ -17,15 +17,11 @@
 	// for the context menu. It sits outside the rows: nesting one
 	// ContextMenu.Trigger inside another would open two menus at once.
 	function handleDragOver(event: DragEvent) {
-		if (!fileTree.canMove(fileTree.dragId, ROOT_ID)) return;
-		event.preventDefault();
-		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-		fileTree.setDropTarget(ROOT_ID);
+		fileTree.dragOver(event, ROOT_ID);
 	}
 
 	function handleDrop(event: DragEvent) {
-		event.preventDefault();
-		fileTree.drop(ROOT_ID);
+		fileTree.dropEvent(event, ROOT_ID);
 	}
 </script>
 

@@ -51,6 +51,48 @@ function writeLastOpened(nodeId: string) {
 	}
 }
 
+/** Files untouched for longer than this are shown as "old" in the sidebar. */
+export const OLD_FILE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function isOldFile(node: FileNode, now = Date.now()): boolean {
+	return node.type === "file" && now - node.updatedAt > OLD_FILE_AGE_MS;
+}
+
+/** Extensions accepted when markdown files are dropped from the OS. */
+const MARKDOWN_EXTENSION = /\.(md|markdown|mdown|mkdn?|mdwn|mdtxt|mdtext)$/i;
+
+function isMarkdownFile(file: File): boolean {
+	return MARKDOWN_EXTENSION.test(file.name) || file.type === "text/markdown";
+}
+
+/** True if the drag carries files from outside the page (the OS file manager). */
+function isExternalFileDrag(event: DragEvent): boolean {
+	return dragId === null && (event.dataTransfer?.types.includes("Files") ?? false);
+}
+
+/**
+ * An external drag has no "dragend" on our elements and no reliable
+ * "dragleave" when the pointer leaves the window: the highlight is cleared
+ * when "dragover" stops arriving (the browser fires it every ~50ms while the
+ * pointer is over a target that accepts it).
+ */
+const EXTERNAL_HOVER_TIMEOUT_MS = 150;
+let externalHoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+function armExternalHoverTimeout() {
+	if (externalHoverTimer !== null) clearTimeout(externalHoverTimer);
+	externalHoverTimer = setTimeout(() => {
+		externalHoverTimer = null;
+		dropTargetId = null;
+	}, EXTERNAL_HOVER_TIMEOUT_MS);
+}
+
+function clearExternalHover() {
+	if (externalHoverTimer !== null) clearTimeout(externalHoverTimer);
+	externalHoverTimer = null;
+	dropTargetId = null;
+}
+
 export interface TreeNode extends FileNode {
 	children: TreeNode[];
 }
@@ -353,12 +395,74 @@ export const fileTree = {
 	},
 
 	/**
+	 * Shared "dragover" logic for the tree targets, both for internal moves and
+	 * for files dragged in from the OS. Returns true when the drop is accepted
+	 * (the event has then been preventDefault-ed and the target highlighted).
+	 */
+	dragOver(event: DragEvent, parentId: string): boolean {
+		const external = isExternalFileDrag(event);
+		const accepted = external
+			? parentId === ROOT_ID || findNode(parentId)?.type === "folder"
+			: this.canMove(dragId, parentId);
+		if (!accepted) return false;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = external ? "copy" : "move";
+		dropTargetId = parentId;
+		if (external) armExternalHoverTimeout();
+		return true;
+	},
+
+	/** Shared "drop" logic for the tree targets (see dragOver). */
+	dropEvent(event: DragEvent, parentId: string) {
+		event.preventDefault();
+		if (dragId !== null) {
+			this.drop(parentId).catch((err) => console.error("Could not move the node:", err));
+			return;
+		}
+		// Read synchronously: the FileList is emptied once the handler returns.
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		clearExternalHover();
+		this.importFiles(files, parentId).catch((err) => {
+			console.error("Could not import the files:", err);
+		});
+	},
+
+	/**
+	 * Adds markdown files from the OS to the tree inside `parentId`, then opens
+	 * the last one. Other file types are ignored. Nodes have no extension (the
+	 * export adds it), so ".md" is stripped from the name.
+	 */
+	async importFiles(files: File[], parentId: string): Promise<void> {
+		const markdown = files.filter(isMarkdownFile);
+		if (markdown.length === 0) return;
+		let last: FileNode | null = null;
+		for (const file of markdown) {
+			const content = await file.text();
+			const base = file.name.replace(MARKDOWN_EXTENSION, "").trim() || "untitled";
+			last = await createNode({
+				type: "file",
+				name: uniqueName(base, parentId),
+				parentId,
+				content,
+			});
+			// So that uniqueName sees it when the next file has the same name.
+			nodes.push(last);
+		}
+		if (parentId !== ROOT_ID) await setNodeExpanded(parentId, true);
+		await reload();
+		if (last) this.open(last.id);
+	},
+
+	/**
 	 * Realigns the in-memory copy after the editor has saved. Without this the
 	 * cache would stay at the content read at startup, and reopening the same
 	 * file after leaving it would bring the old text back.
 	 */
 	syncContent(nodeId: string, content: string) {
 		const node = findNode(nodeId);
-		if (node) node.content = content;
+		if (node) {
+			node.content = content;
+			node.updatedAt = Date.now();
+		}
 	},
 };

@@ -2,9 +2,10 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
 	import FileIcon from "@lucide/svelte/icons/file";
+	import FileClockIcon from "@lucide/svelte/icons/file-clock";
 	import TreeMenuItems from "./tree-menu-items.svelte";
 	import TreeRenameInput from "./tree-rename-input.svelte";
-	import { fileTree, type TreeNode } from "$lib/file-tree.svelte";
+	import { fileTree, isOldFile, type TreeNode } from "$lib/file-tree.svelte";
 	import { cn } from "$lib/utils";
 
 	let { node }: { node: TreeNode } = $props();
@@ -17,6 +18,9 @@
 	// only there to keep these rows aligned with the folder rows, which do show
 	// that border when they receive a drop.
 	const dropParentId = $derived(node.parentId);
+	// Not updated over time while the page stays open: good enough for a
+	// "not touched in a month" hint.
+	const old = $derived(isOldFile(node));
 
 	function handleDragStart(event: DragEvent) {
 		fileTree.startDrag(node.id);
@@ -25,17 +29,12 @@
 	}
 
 	function handleDragOver(event: DragEvent) {
-		if (!fileTree.canMove(fileTree.dragId, dropParentId)) return;
-		event.preventDefault();
-		event.stopPropagation();
-		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-		fileTree.setDropTarget(dropParentId);
+		if (fileTree.dragOver(event, dropParentId)) event.stopPropagation();
 	}
 
 	function handleDrop(event: DragEvent) {
-		event.preventDefault();
 		event.stopPropagation();
-		fileTree.drop(dropParentId);
+		fileTree.dropEvent(event, dropParentId);
 	}
 </script>
 
@@ -44,7 +43,8 @@
 		draggable={!renaming}
 		data-testid="tree-file"
 		data-name={node.name}
-		class="block rounded-md border border-transparent"
+		data-old={old ? "" : undefined}
+		class={cn("block rounded-md border border-transparent", old && "opacity-60")}
 		ondragstart={handleDragStart}
 		ondragend={() => fileTree.endDrag()}
 		ondragover={handleDragOver}
@@ -63,7 +63,11 @@
 				)}
 				onclick={() => fileTree.open(node.id)}
 			>
-				<FileIcon class="size-4" />
+				{#if old}
+					<FileClockIcon class="size-4" />
+				{:else}
+					<FileIcon class="size-4" />
+				{/if}
 				<span class="truncate pl-1">{node.name}</span>
 			</Button>
 		{/if}
