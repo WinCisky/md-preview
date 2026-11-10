@@ -102,6 +102,7 @@ let activeFileId = $state<string | null>(null);
 let selectedId = $state<string | null>(null);
 let renamingId = $state<string | null>(null);
 let dropTargetId = $state<string | null>(null);
+let searchQuery = $state("");
 const expanded = new SvelteSet<string>();
 
 /**
@@ -141,6 +142,23 @@ function buildTree(list: FileNode[]): TreeNode[] {
 	}
 	roots.sort(sortSiblings);
 	return roots;
+}
+
+/**
+ * Keeps only the files whose name contains `query` (case-insensitive), plus
+ * the folders leading to them. Folders with no matching file are dropped.
+ */
+function filterTree(tree: TreeNode[], query: string): TreeNode[] {
+	const result: TreeNode[] = [];
+	for (const node of tree) {
+		if (node.type === "file") {
+			if (node.name.toLowerCase().includes(query)) result.push(node);
+			continue;
+		}
+		const children = filterTree(node.children, query);
+		if (children.length > 0) result.push({ ...node, children });
+	}
+	return result;
 }
 
 function findNode(nodeId: string | null): FileNode | undefined {
@@ -208,6 +226,22 @@ export const fileTree = {
 	get tree() {
 		return buildTree(nodes);
 	},
+	/** The tree filtered by the search query (the full tree when it is empty). */
+	get visibleTree() {
+		const tree = buildTree(nodes);
+		const query = searchQuery.trim().toLowerCase();
+		return query ? filterTree(tree, query) : tree;
+	},
+	get searchQuery() {
+		return searchQuery;
+	},
+	set searchQuery(value: string) {
+		searchQuery = value;
+	},
+	/** True while a search filters the tree: every folder is shown open. */
+	get searching() {
+		return searchQuery.trim().length > 0;
+	},
 	get activeFileId() {
 		return activeFileId;
 	},
@@ -228,7 +262,7 @@ export const fileTree = {
 	},
 
 	isExpanded(nodeId: string): boolean {
-		return expanded.has(nodeId);
+		return searchQuery.trim().length > 0 || expanded.has(nodeId);
 	},
 
 	toggleExpanded(nodeId: string) {

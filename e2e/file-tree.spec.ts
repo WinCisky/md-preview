@@ -362,4 +362,31 @@ test.describe('File tree', () => {
 		await expect(row).toHaveCSS('opacity', '0.6');
 		await expect(row.locator('svg.lucide-file-clock')).toBeVisible();
 	});
+	test('the search button filters the tree by file name', async ({ page }) => {
+		await gotoEditor(page);
+		await createTreeNode(page, 'folder', 'drafts');
+		await createTreeNodeFrom(page, 'drafts', 'file', 'chapter-one');
+		await page.getByTestId('tree-root').click();
+		await createTreeNode(page, 'file', 'notes');
+
+		await expect(page.getByTestId('tree-search')).toHaveCount(0);
+		await page.getByRole('button', { name: 'Search files' }).click();
+		const search = page.getByTestId('tree-search');
+		await expect(search).toBeFocused();
+
+		// Matching is case-insensitive and keeps the folders leading to the match.
+		await search.fill('CHAPTER');
+		await expect(page.getByTestId('tree-file')).toHaveCount(1);
+		await expect(page.getByTestId('tree-file')).toHaveAttribute('data-name', 'chapter-one');
+		await expect(page.getByTestId('tree-folder')).toHaveAttribute('data-name', 'drafts');
+
+		await search.fill('nothing-matches');
+		await expect(page.getByTestId('tree-file')).toHaveCount(0);
+		await expect(page.getByTestId('tree-search-empty')).toBeVisible();
+
+		// Escape closes the bar and brings the whole tree back.
+		await search.press('Escape');
+		await expect(page.getByTestId('tree-search')).toHaveCount(0);
+		await expect(page.getByTestId('tree-file')).toHaveCount(3);
+	});
 });
