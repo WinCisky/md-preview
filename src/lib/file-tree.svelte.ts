@@ -22,6 +22,13 @@ import {
 	type FileNode,
 	type NodeType,
 } from "$lib/files-db";
+import { searchDocuments, type DocumentResult } from "$lib/content-search";
+
+/** A range of the document to select and scroll into view once it is open. */
+export interface Reveal {
+	start: number;
+	end: number;
+}
 
 export const SEED_FILE_NAME = "welcome";
 
@@ -103,6 +110,14 @@ let selectedId = $state<string | null>(null);
 let renamingId = $state<string | null>(null);
 let dropTargetId = $state<string | null>(null);
 let searchQuery = $state("");
+/** Advanced search: also look inside the documents, showing the matches. */
+let searchContent = $state(false);
+/**
+ * Live text of the file open in the editor. `node.content` only follows it
+ * after the debounced save: without this, the search would miss what was just
+ * typed and the offsets of its matches would point to the wrong place.
+ */
+let draft = $state<{ id: string; content: string } | null>(null);
 const expanded = new SvelteSet<string>();
 
 /**
@@ -117,7 +132,7 @@ let dragId: string | null = null;
  * Callback registered by the editor to load a file's content. With `null` the
  * editor empties itself: there is no file left to write into.
  */
-let onOpenFile: ((node: FileNode | null) => void) | null = null;
+let onOpenFile: ((node: FileNode | null, reveal?: Reveal) => void) | null = null;
 
 function sortSiblings(a: TreeNode, b: TreeNode): number {
 	if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
@@ -242,6 +257,23 @@ export const fileTree = {
 	get searching() {
 		return searchQuery.trim().length > 0;
 	},
+	get searchContent() {
+		return searchContent;
+	},
+	set searchContent(value: boolean) {
+		searchContent = value;
+	},
+	/** Matches in names and contents (empty unless the advanced search is on). */
+	get contentResults(): DocumentResult[] {
+		if (!searchContent) return [];
+		return searchDocuments(nodes, searchQuery, (node) =>
+			draft?.id === node.id ? draft.content : node.content,
+		);
+	},
+	/** The editor reports here the text being edited, saved or not. */
+	setDraft(nodeId: string | null, content: string) {
+		draft = nodeId === null ? null : { id: nodeId, content };
+	},
 	get activeFileId() {
 		return activeFileId;
 	},
@@ -270,7 +302,7 @@ export const fileTree = {
 	},
 
 	/** The editor registers here to receive the file to open. */
-	setOpenFileHandler(handler: (node: FileNode | null) => void) {
+	setOpenFileHandler(handler: (node: FileNode | null, reveal?: Reveal) => void) {
 		onOpenFile = handler;
 	},
 
@@ -302,14 +334,17 @@ export const fileTree = {
 		selectedId = nodeId;
 	},
 
-	/** Selects a file and asks the editor to open it. */
-	open(nodeId: string) {
+	/**
+	 * Selects a file and asks the editor to open it, optionally selecting and
+	 * scrolling to `reveal` (a search match).
+	 */
+	open(nodeId: string, reveal?: Reveal) {
 		const node = findNode(nodeId);
 		if (!node || node.type !== "file") return;
 		selectedId = nodeId;
 		activeFileId = nodeId;
 		writeLastOpened(nodeId);
-		onOpenFile?.(node);
+		onOpenFile?.(node, reveal);
 	},
 
 	/**

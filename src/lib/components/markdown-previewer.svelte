@@ -31,7 +31,7 @@
 		deleteAttachments,
 		type FileNode,
 	} from "$lib/files-db";
-	import { fileTree } from "$lib/file-tree.svelte";
+	import { fileTree, type Reveal } from "$lib/file-tree.svelte";
 	import {
 		MAX_ATTACHMENT_BYTES,
 		SANITIZE_CONFIG,
@@ -572,6 +572,9 @@
 		// The initial run: nothing the user wrote, nothing to save.
 		if (!userHasTyped) return;
 
+		// Lets the content search see what was typed before it is saved.
+		fileTree.setDraft(currentFileId, text);
+
 		scheduleSave(text);
 	});
 
@@ -617,7 +620,14 @@
 	 * the saving $effect has to be silenced (suppressNextSave) and the dot stays
 	 * green.
 	 */
-	function openFile(node: FileNode | null) {
+	function openFile(node: FileNode | null, reveal?: Reveal) {
+		// Reopening the file already in the editor (e.g. a search match in it):
+		// its saved content may be behind what is on screen, so keep the latter.
+		if (node !== null && node.id === currentFileId) {
+			if (reveal) revealRange(reveal);
+			return;
+		}
+
 		// The first file comes from init(), which is async: if the user has
 		// already typed something in the meantime we do not throw it away, their
 		// text becomes the content of the file just opened.
@@ -629,7 +639,10 @@
 		if (!keepUserText && node?.id !== currentFileId) flushPendingSave();
 		currentFileId = node?.id ?? null;
 		if (node) adoptPendingAttachments(node.id);
-		if (keepUserText) return;
+		if (keepUserText) {
+			fileTree.setDraft(currentFileId, markdownText);
+			return;
+		}
 
 		// A just-opened file starts from the top, whatever the last edit was.
 		followEnd = false;
@@ -641,7 +654,33 @@
 			suppressNextSave = true;
 			markdownText = content;
 		}
+		fileTree.setDraft(currentFileId, content);
 		saveStatus = "saved";
+		if (reveal) revealRange(reveal);
+	}
+
+	/**
+	 * Selects `range` in the editor and scrolls it into view, a third of the way
+	 * down the pane; the preview follows through the regular scroll sync. Waits
+	 * for the text of a just-opened file to be rendered first.
+	 */
+	async function revealRange(range: Reveal) {
+		await tick();
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+		const textarea = textareaEl;
+		if (!textarea) return;
+		const length = textarea.value.length;
+		const start = Math.min(Math.max(0, range.start), length);
+		const end = Math.min(Math.max(start, range.end), length);
+		textarea.focus({ preventScroll: true });
+		textarea.setSelectionRange(start, end);
+
+		const line = textarea.value.slice(0, start).split("\n").length - 1;
+		anchorMap = previewEl ? buildAnchorMap(textarea, previewEl) : null;
+		const lineTop = anchorMap?.lineTops[line];
+		if (lineTop === undefined) return;
+		const maxTop = textarea.scrollHeight - textarea.clientHeight;
+		textarea.scrollTop = Math.max(0, Math.min(maxTop, lineTop - textarea.clientHeight / 3));
 	}
 
 	onMount(() => {
